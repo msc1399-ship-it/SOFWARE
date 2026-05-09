@@ -146,7 +146,7 @@ def _imputar_devoluciones_en_compras(df_goteo, abonos):
     return imputacion, pendientes
 
 
-def analizar_gastos_servicios(df_compras, gastos_factura):
+def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
     df_goteo = df_compras[df_compras["tipo_compra"] == "goteo"].copy()
 
     if df_goteo.empty:
@@ -160,7 +160,14 @@ def analizar_gastos_servicios(df_compras, gastos_factura):
     df_goteo["unidades"] = _serie_numerica(df_goteo, "unidades")
 
     tiene_avantia = hay_avantia(df_goteo, gastos_factura)
-    pct_vida_natural = 2.5 if tiene_avantia else 2.0
+    reglas_servicios = (condicion or {}).get("servicios", {})
+    pct_vida_natural = (
+        reglas_servicios.get("pct_con_avantia", 2.5)
+        if tiene_avantia
+        else reglas_servicios.get("pct_sin_avantia", 2.0)
+    )
+    imputar_devoluciones = reglas_servicios.get("devoluciones_por_defecto", True)
+    pct_devoluciones = reglas_servicios.get("devoluciones_pct", 2.5)
     total_servicios_factura = importe_servicios_factura(gastos_factura)
 
     vida_natural = df_goteo[df_goteo["observaciones"].apply(_contiene_observacion_b)].copy()
@@ -186,13 +193,13 @@ def analizar_gastos_servicios(df_compras, gastos_factura):
     imputacion_devoluciones = pd.DataFrame()
     pendiente_otros_gastos = pd.DataFrame()
 
-    if diferencia_servicios > 0.05:
+    if diferencia_servicios > 0.05 and imputar_devoluciones:
         abonos = df_goteo[df_goteo["neto"] < 0].copy()
         if not abonos.empty:
             abonos["tipo_servicio"] = "devoluciones"
-            abonos["cargo_pct"] = 2.5
+            abonos["cargo_pct"] = pct_devoluciones
             abonos["base_cargo"] = abonos["bruto"].abs()
-            abonos["cargo_teorico"] = abonos["base_cargo"] * 0.025
+            abonos["cargo_teorico"] = abonos["base_cargo"] * (pct_devoluciones / 100)
             total_teorico_abonos = abonos["cargo_teorico"].sum()
 
             if total_teorico_abonos > 0:
@@ -283,6 +290,7 @@ def analizar_gastos_servicios(df_compras, gastos_factura):
         "cargo_vida_natural": total_vida_natural,
         "diferencia_servicios": diferencia_servicios,
         "cargo_devoluciones": total_devoluciones,
+        "imputa_devoluciones": imputar_devoluciones,
         "devoluciones_cuadran": abs(diferencia_servicios - total_devoluciones) <= 0.05
         and diferencia_servicios > 0.05,
     }

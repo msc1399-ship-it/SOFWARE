@@ -64,10 +64,31 @@ CONDICIONES_BIDAFARMA = {
     },
     "ZV": {
         "nombre": "Zacofarva",
+        "alias": ["ZACOFARVA", "ZACOFARVA GOTEO"],
         "albaran_74": "si",
         "tipo_albaran_74": 2,
         "ajuste_comercial_factura": False,
         "cargo_adicional_gestion": False,
+        "albaranes_netos_totalizados": True,
+        "facturacion": {
+            "normal": "decenal",
+            "facturas_normales_mes": 3,
+            "transfer": "mensual_fin_mes",
+            "facturas_transfer_mes": 1,
+        },
+        "servicios": {
+            "bidanatural": True,
+            "pct_sin_avantia": 2.0,
+            "pct_con_avantia": 2.5,
+            "devoluciones_por_defecto": False,
+            "devoluciones_pct": 2.5,
+        },
+        "faceta": {
+            "margen_tramo_fijo_referencia": 145.0,
+            "margen_tramo_fijo_actualizable": True,
+            "liquidaciones_club_mes_vencido": True,
+            "imputacion_liquidaciones": "lineas_club_detectadas",
+        },
     },
     "GS": {
         "nombre": "Socofasa",
@@ -107,6 +128,13 @@ def _extraer_acronimos_directos(df, columnas):
             acronimo = _normalizar_texto(valor)
             if acronimo in CONDICIONES_BIDAFARMA:
                 contador[acronimo] += 1
+                continue
+
+            for clave, config in CONDICIONES_BIDAFARMA.items():
+                alias = {_normalizar_texto(valor) for valor in config.get("alias", [])}
+                if acronimo in alias:
+                    contador[clave] += 1
+                    break
 
     return contador
 
@@ -127,7 +155,19 @@ def extraer_acronimos(df):
     ]
 
     contador = Counter()
-    patron = re.compile(r"\b(" + "|".join(CONDICIONES_BIDAFARMA.keys()) + r")\b", re.IGNORECASE)
+    tokens_condicion = list(CONDICIONES_BIDAFARMA.keys())
+    for config in CONDICIONES_BIDAFARMA.values():
+        tokens_condicion.extend(config.get("alias", []))
+    tokens_condicion = sorted({_normalizar_texto(token) for token in tokens_condicion}, key=len, reverse=True)
+    mapa_tokens = {
+        _normalizar_texto(clave): clave
+        for clave in CONDICIONES_BIDAFARMA
+    }
+    for clave, config in CONDICIONES_BIDAFARMA.items():
+        for alias in config.get("alias", []):
+            mapa_tokens[_normalizar_texto(alias)] = clave
+
+    patron = re.compile(r"\b(" + "|".join(re.escape(token) for token in tokens_condicion) + r")\b", re.IGNORECASE)
 
     for serie in _series_texto(df, candidatos):
         for valor in serie:
@@ -135,7 +175,7 @@ def extraer_acronimos(df):
             if not texto:
                 continue
             for match in patron.findall(texto):
-                acronimo = _normalizar_texto(match)
+                acronimo = mapa_tokens.get(_normalizar_texto(match))
                 if acronimo in CONDICIONES_BIDAFARMA:
                     contador[acronimo] += 1
 
@@ -150,7 +190,7 @@ def extraer_acronimos(df):
             if not texto:
                 continue
             for match in patron.findall(texto):
-                acronimo = _normalizar_texto(match)
+                acronimo = mapa_tokens.get(_normalizar_texto(match))
                 if acronimo in CONDICIONES_BIDAFARMA:
                     contador[acronimo] += 1
 

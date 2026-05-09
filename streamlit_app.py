@@ -1363,7 +1363,7 @@ def render_vida_pharma():
                     ]
                 )
 
-            analisis_servicios = servicios.analizar_gastos_servicios(df, resultado["gastos"])
+            analisis_servicios = servicios.analizar_gastos_servicios(df, resultado["gastos"], condicion_detectada)
 
             if analisis_servicios and analisis_servicios["resumen"]["servicios_factura"] > 0:
                 st.subheader("🧾 Imputación gastos por servicios")
@@ -1381,10 +1381,16 @@ def render_vida_pharma():
                 if abs(resumen_servicios["diferencia_servicios"]) <= 0.05:
                     st.success("Los servicios de factura cuadran con el cargo calculado de bidanatural.")
                 elif resumen_servicios["diferencia_servicios"] > 0:
-                    st.warning(
-                        "Hay importe de servicios no cubierto por bidanatural. "
-                        "Se imputa como posible cargo por devoluciones sobre abonos."
-                    )
+                    if resumen_servicios.get("imputa_devoluciones", True):
+                        st.warning(
+                            "Hay importe de servicios no cubierto por bidanatural. "
+                            "Se imputa como posible cargo por devoluciones sobre abonos."
+                        )
+                    else:
+                        st.warning(
+                            "Hay importe de servicios no cubierto por bidanatural. "
+                            "La tarifa detectada no imputa devoluciones por defecto; queda como diferencia a revisar."
+                        )
                     if resumen_servicios.get("devoluciones_cuadran"):
                         st.success(
                             "La diferencia de servicios coincide exactamente con el cargo calculado "
