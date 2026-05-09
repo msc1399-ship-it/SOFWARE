@@ -695,6 +695,24 @@ def _analisis_cargo_adicional_gestion(df, importe_cargo):
     }
 
 
+def _detectar_penalizacion_bajo_consumo(condicion, diferencia_gestion):
+    if not condicion or abs(float(diferencia_gestion or 0)) <= 0.05:
+        return None
+
+    reglas_gestion = condicion.get("gestion", {})
+    if not reglas_gestion.get("penalizacion_bajo_consumo"):
+        return None
+
+    importe_penalizacion = float(reglas_gestion.get("importe_penalizacion_bajo_consumo", 0.0) or 0.0)
+    if abs(float(diferencia_gestion) - importe_penalizacion) > 0.05:
+        return None
+
+    return {
+        "importe": round(importe_penalizacion, 2),
+        "umbral_consumo": reglas_gestion.get("umbral_consumo"),
+    }
+
+
 def _resumen_bidafarma(
     df,
     analisis_faceta=None,
@@ -1657,6 +1675,16 @@ def render_vida_pharma():
                     g2.metric("BitTransfer", f"{cargo_bitransfer:.2f} €")
                     g3.metric("Avantia", f"{cargo_avantia:.2f} €")
                     g4.metric("Diferencia", f"{diferencia_gestion:.2f} €")
+
+                    penalizacion_bajo_consumo = _detectar_penalizacion_bajo_consumo(
+                        condicion_detectada,
+                        diferencia_gestion,
+                    )
+                    if penalizacion_bajo_consumo:
+                        st.info(
+                            "La diferencia de gestión coincide con la penalización por bajo consumo "
+                            f"({penalizacion_bajo_consumo['importe']:.2f} €)."
+                        )
 
                 if (
                     condicion_detectada
