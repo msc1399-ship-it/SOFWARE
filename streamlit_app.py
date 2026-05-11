@@ -16,6 +16,7 @@ import modules.faceta as faceta
 import modules.condiciones_bidafarma as condiciones_bidafarma
 import modules.maestro_laboratorios as maestro_laboratorios
 import modules.nomenclator_aemps as nomenclator_aemps
+import modules.ventas as ventas
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -24,6 +25,7 @@ faceta = importlib.reload(faceta)
 condiciones_bidafarma = importlib.reload(condiciones_bidafarma)
 maestro_laboratorios = importlib.reload(maestro_laboratorios)
 nomenclator_aemps = importlib.reload(nomenclator_aemps)
+ventas = importlib.reload(ventas)
 
 PROVEEDORES_BASE = {
     "cofares": "cofares",
@@ -982,18 +984,77 @@ def render_ventas_farmacia():
     st.header("Ventas farmacia")
     archivos = st.file_uploader(
         "Sube ventas de la farmacia",
-        type=["xlsx"],
+        type=["xlsx", "xls", "csv"],
         accept_multiple_files=True,
         key="ventas_farmacia_excel",
     )
     st.session_state["ventas_farmacia"] = [archivo.name for archivo in archivos] if archivos else []
 
     if archivos:
-        st.success(f"{len(archivos)} archivo(s) de ventas cargado(s).")
-        st.dataframe(pd.DataFrame({"archivo": [archivo.name for archivo in archivos]}))
-    else:
-        st.info("Sube aquí los Excel de ventas de la farmacia. Más adelante añadiremos su normalización.")
+        ventas_normalizadas = []
+        for archivo in archivos:
+            try:
+                ventas_normalizadas.append(ventas.normalizar_ventas_erp(ventas.leer_tabla(archivo)))
+            except ValueError as error:
+                st.error(f"No se pudo leer {archivo.name}: {error}")
 
+        if ventas_normalizadas:
+            df_ventas = pd.concat(ventas_normalizadas, ignore_index=True)
+            _guardar_dataset("ventas_farmacia_df", df_ventas)
+
+            dataframes_compras = [
+                st.session_state.get("df_bidafarma"),
+                st.session_state.get("df_cofares"),
+                st.session_state.get("df_alliance"),
+                st.session_state.get("df_hefame"),
+            ]
+            costes_reales = ventas.coste_medio_real_por_cn(dataframes_compras)
+            analisis, discordancia, no_fiable = ventas.analizar_margen_real(df_ventas, costes_reales)
+            _guardar_dataset("analisis_ventas_margen_real_df", analisis)
+
+            st.success(f"{len(archivos)} archivo(s) de ventas cargado(s).")
+
+            v1, v2, v3, v4 = st.columns(4)
+            v1.metric("CN ventas", int(df_ventas["cn"].nunique()))
+            v2.metric("Unidades vendidas", f"{df_ventas['unidades_vendidas'].sum():.0f}")
+            v3.metric("Venta neta", f"{df_ventas['venta_neta'].sum():.2f} €")
+            v4.metric("CN con coste real", int(analisis["tiene_compras_reales"].sum()) if not analisis.empty else 0)
+
+            columnas = [
+                "cn",
+                "descripcion",
+                "unidades_vendidas",
+                "unidades_compradas_periodo",
+                "unidades_sin_compra_periodo",
+                "venta_neta",
+                "coste_medio_real",
+                "coste_real_total_vendido",
+                "margen_real_pct",
+                "margen_erp",
+                "diferencia_margen_erp_vs_real",
+                "coste_erp_no_fiable",
+                "motivo_coste_erp_no_fiable",
+            ]
+
+            st.subheader("Margen real por CN")
+            st.dataframe(analisis[[col for col in columnas if col in analisis.columns]])
+
+            st.subheader("Ranking de discordancia válida ERP vs margen real")
+            if not discordancia.empty:
+                st.dataframe(discordancia[[col for col in columnas if col in discordancia.columns]].head(50))
+            else:
+                st.info("No hay discordancias válidas: faltan costes ERP fiables, márgenes ERP válidos o compras reales.")
+
+            st.subheader("Artículos con coste ERP no fiable")
+            if not no_fiable.empty:
+                st.dataframe(no_fiable[[col for col in columnas if col in no_fiable.columns]])
+            else:
+                st.success("No se han detectado costes/márgenes ERP no fiables.")
+    else:
+        st.info(
+            "Sube aquí las ventas del ERP. El margen real se calculará con el coste medio real de compras, "
+            "y el margen ERP se usará solo como comparación."
+        )
 
 def _normalizar_stock_farmacia(df):
     if df is None or df.empty:
