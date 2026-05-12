@@ -26,6 +26,7 @@ maestro_laboratorios = importlib.reload(maestro_laboratorios)
 nomenclator_aemps = importlib.reload(nomenclator_aemps)
 ventas = importlib.reload(ventas)
 
+DEBUG_PASSWORD = "CAMBIAR_CLAVE"
 MODO_DEBUG = False
 
 PROVEEDORES_BASE = {
@@ -1369,9 +1370,15 @@ def render_vida_pharma():
                 st.success("✅ Albaranes NORMAL conciliados")
             else:
                 if faltan:
-                    st.error(f"Faltan: {faltan}")
+                    if MODO_DEBUG:
+                        st.error(f"Faltan: {faltan}")
+                    else:
+                        st.error(f"Faltan {len(faltan)} albaranes NORMAL por conciliar.")
                 if sobran:
-                    st.warning(f"Sobran: {sobran}")
+                    if MODO_DEBUG:
+                        st.warning(f"Sobran: {sobran}")
+                    else:
+                        st.warning(f"Sobran {len(sobran)} albaranes NORMAL en factura.")
 
             st.subheader("💸 Gastos factura normal")
             st.dataframe(resultado["gastos"])
@@ -1781,9 +1788,15 @@ def render_vida_pharma():
                 st.success("✅ Albaranes TRANSFER conciliados")
             else:
                 if faltan:
-                    st.error(f"Faltan en transfer: {faltan}")
+                    if MODO_DEBUG:
+                        st.error(f"Faltan en transfer: {faltan}")
+                    else:
+                        st.error(f"Faltan {len(faltan)} albaranes TRANSFER por conciliar.")
                 if sobran:
-                    st.warning(f"Sobran en transfer: {sobran}")
+                    if MODO_DEBUG:
+                        st.warning(f"Sobran en transfer: {sobran}")
+                    else:
+                        st.warning(f"Sobran {len(sobran)} albaranes TRANSFER en factura.")
 
             st.subheader("🚚 Servicios logísticos")
             st.dataframe(resultado_transfer["gastos"])
@@ -1921,6 +1934,9 @@ def render_vida_pharma():
 
 st.set_page_config(layout="wide")
 st.title("📊 Auditoría de Compras Farmacia")
+
+clave_modo_auditor = st.sidebar.text_input("Clave modo auditor", type="password")
+MODO_DEBUG = clave_modo_auditor == DEBUG_PASSWORD
 
 if st.button("Borrar datos cargados"):
     st.session_state.clear()
