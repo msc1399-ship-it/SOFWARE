@@ -1260,7 +1260,7 @@ def render_vida_pharma():
             c1.metric("Nombre", condicion_detectada["nombre"])
             c2.metric("Acrónimo", condicion_detectada["acronimo"])
         else:
-            st.info("Condición detectada. Los detalles de la condición solo se muestran en modo auditor.")
+            st.info("Condición detectada.")
 
     if not df_faceta_bidafarma.empty:
         analisis_faceta = faceta.analizar_faceta_v(df, df_faceta_bidafarma) if df is not None else None
