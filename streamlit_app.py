@@ -1255,9 +1255,12 @@ def render_vida_pharma():
 
     if condicion_detectada:
         st.subheader("🧭 Condición detectada")
-        c1, c2 = st.columns(2)
-        c1.metric("Nombre", condicion_detectada["nombre"])
-        c2.metric("Acrónimo", condicion_detectada["acronimo"])
+        if MODO_DEBUG:
+            c1, c2 = st.columns(2)
+            c1.metric("Nombre", condicion_detectada["nombre"])
+            c2.metric("Acrónimo", condicion_detectada["acronimo"])
+        else:
+            st.info("Condición detectada. Los detalles de la condición solo se muestran en modo auditor.")
 
     if not df_faceta_bidafarma.empty:
         analisis_faceta = faceta.analizar_faceta_v(df, df_faceta_bidafarma) if df is not None else None
@@ -1266,7 +1269,7 @@ def render_vida_pharma():
             resumen_faceta = analisis_faceta["resumen"]
             hay_cargo_tarifa = abs(resumen_faceta["margen_tramo_fijo_total"]) > 0.0001
             titulo_tarifa = "Albarán TP 74"
-            if condicion_detectada:
+            if condicion_detectada and MODO_DEBUG:
                 if hay_cargo_tarifa:
                     titulo_tarifa = f"Tarifa {condicion_detectada['acronimo']} · {condicion_detectada['nombre']}"
                 else:
