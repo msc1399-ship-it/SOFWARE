@@ -27,6 +27,8 @@ maestro_laboratorios = importlib.reload(maestro_laboratorios)
 nomenclator_aemps = importlib.reload(nomenclator_aemps)
 ventas = importlib.reload(ventas)
 
+MODO_DEBUG = False
+
 PROVEEDORES_BASE = {
     "cofares": "cofares",
     "alliance": "alliance",
@@ -66,6 +68,13 @@ def normalizar_albaran(valor):
 
 def _guardar_dataset(clave, df):
     st.session_state[clave] = df
+
+
+def _mostrar_dataframe_debug(df, mensaje="Vista completa oculta por privacidad."):
+    if MODO_DEBUG:
+        st.dataframe(df)
+    else:
+        st.caption(f"{mensaje} Activa MODO_DEBUG para verla.")
 
 
 def _guardar_maestro_csv(df, ruta):
@@ -313,7 +322,7 @@ def _mostrar_vistas_albaranes(df):
         titulo = "📦 Goteo" if tipo == "goteo" else "🚚 Transfer"
         st.header(f"{titulo}")
 
-        st.dataframe(df_tipo)
+        _mostrar_dataframe_debug(df_tipo, "Albaranes completos ocultos por privacidad.")
 
         if "tipo" in df_tipo.columns:
             mask_faceta = df_tipo.apply(
@@ -1315,10 +1324,11 @@ def render_vida_pharma():
                 f3.metric("Base de aplicación", f"{resumen_faceta['base_aplicacion']:.2f} €")
                 f4.metric("Liquidaciones", f"{resumen_faceta['liquidaciones_total']:.2f} €")
                 st.caption("Conceptos detectados en albaranes TP 74")
-                st.dataframe(
+                _mostrar_dataframe_debug(
                     analisis_faceta["conceptos"][
                         [col for col in ["fecha", "hora", "tp", "concepto", "importe"] if col in analisis_faceta["conceptos"].columns]
-                    ]
+                    ],
+                    "Conceptos completos del albarán TP 74 ocultos por privacidad.",
                 )
 
             if hay_cargo_tarifa and not analisis_faceta["detalle_tramo_fijo"].empty:
@@ -1366,7 +1376,10 @@ def render_vida_pharma():
                     ]
                 )
         else:
-            st.dataframe(df_faceta_bidafarma)
+            _mostrar_dataframe_debug(
+                df_faceta_bidafarma,
+                "Albaranes TP 74 completos ocultos por privacidad.",
+            )
             st.info("Se ha detectado un albarán TP 74, pero todavía no hay líneas de compra goteo sobre las que imputar cargos o liquidaciones.")
 
     # =========================
@@ -1616,7 +1629,10 @@ def render_vida_pharma():
                         c2.metric("Unidades", int(df_bt_compras["cantidad"].fillna(0).sum()))
                         c3.metric("Importe neto", f"{df_bt_compras['importe_neto'].sum():.2f} €")
 
-                        st.dataframe(df_bt_compras)
+                        _mostrar_dataframe_debug(
+                            df_bt_compras,
+                            "Listado completo de compras BitTransfer oculto por privacidad.",
+                        )
 
                     except ValueError as error:
                         st.error(f"No se pudo leer el listado de compras BitTransfer: {error}")
@@ -1707,7 +1723,10 @@ def render_vida_pharma():
                                     try:
                                         df_plataforma = bitransfer.leer_listado_compras_bitransfer(excel_plataforma)
                                         df_plataforma = _enriquecer_con_maestro(df_plataforma)
-                                        st.dataframe(df_plataforma)
+                                        _mostrar_dataframe_debug(
+                                            df_plataforma,
+                                            f"Listado completo de productos de {nombre_plataforma} oculto por privacidad.",
+                                        )
                                     except ValueError as error:
                                         st.error(
                                             f"No se pudo leer el listado de productos de {nombre_plataforma}: {error}"
