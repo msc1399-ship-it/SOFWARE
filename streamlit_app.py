@@ -27,6 +27,10 @@ nomenclator_aemps = importlib.reload(nomenclator_aemps)
 ventas = importlib.reload(ventas)
 
 DEBUG_PASSWORD = "CAMBIAR_CLAVE"
+try:
+    APP_PASSWORD = st.secrets.get("APP_PASSWORD", "1412Limon")
+except Exception:
+    APP_PASSWORD = "1412Limon"
 MODO_DEBUG = False
 
 PROVEEDORES_BASE = {
@@ -69,6 +73,13 @@ def _mostrar_dataframe_debug(df, mensaje="Vista completa oculta por privacidad."
         st.dataframe(df)
     else:
         st.caption(f"{mensaje} Activa MODO_DEBUG para verla.")
+
+
+def _verificar_acceso_app():
+    password = st.text_input("Contraseña", type="password")
+    if password != APP_PASSWORD:
+        st.warning("Acceso restringido")
+        st.stop()
 
 
 def _asegurar_maestros_en_sesion():
@@ -1937,6 +1948,8 @@ def render_vida_pharma():
 
 st.set_page_config(layout="wide")
 st.title("📊 Auditoría de Compras Farmacia")
+
+_verificar_acceso_app()
 
 clave_modo_auditor = st.sidebar.text_input("Clave modo auditor", type="password")
 MODO_DEBUG = clave_modo_auditor == DEBUG_PASSWORD
