@@ -76,8 +76,19 @@ def _mostrar_dataframe_debug(df, mensaje="Vista completa oculta por privacidad."
 
 
 def _verificar_acceso_app():
-    password = st.text_input("Contraseña", type="password")
-    if password != APP_PASSWORD:
+    if st.session_state.get("app_authenticated"):
+        return
+
+    _, login_col, _ = st.columns([1, 1.2, 1])
+    with login_col:
+        with st.form("login_app"):
+            password = st.text_input("Contraseña", type="password")
+            submitted = st.form_submit_button("Entrar")
+
+        if submitted and password == APP_PASSWORD:
+            st.session_state["app_authenticated"] = True
+            st.rerun()
+
         st.warning("Acceso restringido")
         st.stop()
 
