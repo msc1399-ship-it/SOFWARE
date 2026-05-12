@@ -28,9 +28,9 @@ ventas = importlib.reload(ventas)
 
 DEBUG_PASSWORD = "CAMBIAR_CLAVE"
 try:
-    APP_PASSWORD = st.secrets.get("APP_PASSWORD", "1412Limon")
+    APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
 except Exception:
-    APP_PASSWORD = "1412Limon"
+    APP_PASSWORD = ""
 MODO_DEBUG = False
 
 PROVEEDORES_BASE = {
