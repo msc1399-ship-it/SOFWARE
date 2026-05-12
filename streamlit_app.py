@@ -1967,6 +1967,10 @@ def render_vida_pharma():
 st.set_page_config(layout="wide")
 st.title("📊 Auditoría de Compras Farmacia")
 
+if st.button("Borrar datos cargados"):
+    st.session_state.clear()
+    st.rerun()
+
 with st.expander("Base maestra CN / laboratorio", expanded=False):
     _render_base_maestra_laboratorios()
 
