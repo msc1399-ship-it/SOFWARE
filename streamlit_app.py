@@ -3,7 +3,6 @@ import pandas as pd
 import re
 import importlib
 import unicodedata
-from pathlib import Path
 
 from modules.ingestion import load_excel
 from modules.parser import parse_sections
@@ -46,12 +45,6 @@ SECCIONES = [
     "Resumen",
 ]
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
-MAESTRO_MANUAL_PATH = DATA_DIR / "maestro_cn_laboratorio_manual.csv"
-MAESTRO_MINISTERIO_PATH = DATA_DIR / "maestro_cn_laboratorio_ministerio.csv"
-MAESTRO_AEMPS_PATH = DATA_DIR / "maestro_cn_laboratorio_aemps.csv"
-
-
 # =========================
 # NORMALIZADOR GLOBAL
 # =========================
@@ -77,40 +70,8 @@ def _mostrar_dataframe_debug(df, mensaje="Vista completa oculta por privacidad."
         st.caption(f"{mensaje} Activa MODO_DEBUG para verla.")
 
 
-def _guardar_maestro_csv(df, ruta):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    df.to_csv(ruta, index=False)
-
-
-def _cargar_maestro_csv(ruta):
-    if not ruta.exists():
-        return None
-
-    df = pd.read_csv(ruta, dtype=str)
-    if df.empty:
-        return None
-
-    return df
-
-
 def _asegurar_maestros_en_sesion():
-    if "maestro_laboratorios_df" not in st.session_state:
-        manual_df = _cargar_maestro_csv(MAESTRO_MANUAL_PATH)
-        if manual_df is not None:
-            st.session_state["maestro_laboratorios_df"] = manual_df
-            st.session_state["maestro_laboratorios_nombre"] = MAESTRO_MANUAL_PATH.name
-
-    if "maestro_ministerio_df" not in st.session_state:
-        ministerio_df = _cargar_maestro_csv(MAESTRO_MINISTERIO_PATH)
-        if ministerio_df is not None:
-            st.session_state["maestro_ministerio_df"] = ministerio_df
-            st.session_state["maestro_ministerio_nombre"] = MAESTRO_MINISTERIO_PATH.name
-
-    if "maestro_medicamentos_aemps_df" not in st.session_state:
-        aemps_df = _cargar_maestro_csv(MAESTRO_AEMPS_PATH)
-        if aemps_df is not None:
-            st.session_state["maestro_medicamentos_aemps_df"] = aemps_df
-            st.session_state["maestro_medicamentos_aemps_nombre"] = MAESTRO_AEMPS_PATH.name
+    return
 
 
 def _obtener_maestro_laboratorios():
@@ -173,7 +134,6 @@ def _render_base_maestra_laboratorios():
                     ministerio_df["tipo_producto"] = None
                 st.session_state["maestro_ministerio_df"] = ministerio_df
                 st.session_state["maestro_ministerio_nombre"] = ministerio_file.name
-                _guardar_maestro_csv(ministerio_df, MAESTRO_MINISTERIO_PATH)
             except ValueError as error:
                 st.error(f"No se pudo leer el nomenclátor del Ministerio: {error}")
 
@@ -194,7 +154,6 @@ def _render_base_maestra_laboratorios():
                 maestro_df["fuente_maestro"] = "manual"
                 st.session_state["maestro_laboratorios_df"] = maestro_df
                 st.session_state["maestro_laboratorios_nombre"] = maestro_file.name
-                _guardar_maestro_csv(maestro_df, MAESTRO_MANUAL_PATH)
             except ValueError as error:
                 st.error(f"No se pudo leer la base maestra manual: {error}")
 
@@ -214,7 +173,6 @@ def _render_base_maestra_laboratorios():
                 nomenclator_df = nomenclator_aemps.leer_nomenclator_aemps(nomenclator_file)
                 st.session_state["maestro_medicamentos_aemps_df"] = nomenclator_df
                 st.session_state["maestro_medicamentos_aemps_nombre"] = nomenclator_file.name
-                _guardar_maestro_csv(nomenclator_df, MAESTRO_AEMPS_PATH)
             except ValueError as error:
                 st.error(f"No se pudo leer el Nomenclátor AEMPS: {error}")
 
@@ -242,7 +200,6 @@ def _render_base_maestra_laboratorios():
         st.caption(
             f"Nomenclátor principal activo: {st.session_state.get('maestro_ministerio_nombre', 'nomenclátor cargado')}"
         )
-        st.caption(f"Persistido en: {MAESTRO_MINISTERIO_PATH}")
 
     if aemps_df is not None and not aemps_df.empty:
         a1, a2, a3 = st.columns(3)
@@ -253,7 +210,6 @@ def _render_base_maestra_laboratorios():
         st.caption(
             f"Nomenclátor activo: {st.session_state.get('maestro_medicamentos_aemps_nombre', 'nomenclátor cargado')}"
         )
-        st.caption(f"Persistido en: {MAESTRO_AEMPS_PATH}")
         if cn_con_laboratorio < len(aemps_df):
             st.warning(
                 "Hay códigos nacionales del Nomenclátor sin laboratorio resuelto. "
@@ -271,7 +227,6 @@ def _render_base_maestra_laboratorios():
         st.caption(
             f"Base manual activa: {st.session_state.get('maestro_laboratorios_nombre', 'base manual cargada')}"
         )
-        st.caption(f"Persistida en: {MAESTRO_MANUAL_PATH}")
 
     if maestro_df is not None and not maestro_df.empty:
         m1, m2 = st.columns(2)
