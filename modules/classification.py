@@ -142,6 +142,11 @@ def clasificar_especialidad_cara(df):
     df["neto_unitario"] = (neto / unidades_validas).fillna(0.0)
 
     mask_iva4 = _iva_es_cuatro(iva)
+    if "seccion_albaran" in df.columns:
+        seccion = df["seccion_albaran"].astype(str).str.lower().str.strip()
+        mask_seccion_especialidad = seccion.eq("especialidad")
+    else:
+        mask_seccion_especialidad = pd.Series([True] * len(df), index=df.index)
     mask_pvp = pd.Series([False] * len(df), index=df.index)
     mask_pva = pd.Series([False] * len(df), index=df.index)
     pvp_fiable = pd.Series([False] * len(df), index=df.index)
@@ -158,7 +163,7 @@ def clasificar_especialidad_cara(df):
         pva_unitario = df["bruto_unitario"]
     mask_pva = (~pvp_fiable) & (pva_unitario >= UMBRAL_PVA_ESPECIALIDAD_CARA)
 
-    df["es_especialidad_cara"] = mask_iva4 & (mask_pvp | mask_pva)
+    df["es_especialidad_cara"] = mask_iva4 & mask_seccion_especialidad & (mask_pvp | mask_pva)
     df["tipo_especialidad_cara"] = ""
     df.loc[df["es_especialidad_cara"] & mask_pvp, "tipo_especialidad_cara"] = "pvp_sin_iva"
     df.loc[

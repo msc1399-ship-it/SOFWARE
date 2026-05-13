@@ -247,6 +247,10 @@ def analizar_faceta_v(df_compras, df_faceta):
     df_goteo["bruto"] = _serie_numerica(df_goteo, "bruto")
     df_goteo["neto"] = _serie_numerica(df_goteo, "neto")
     df_goteo["unidades"] = _serie_numerica(df_goteo, "unidades")
+    no_especialidad_cara = ~df_goteo.get(
+        "es_especialidad_cara",
+        pd.Series(False, index=df_goteo.index),
+    ).fillna(False).astype(bool)
 
     descripcion_normalizada = df_goteo["descripcion"].apply(_normalizar_texto)
     tipos_normalizados = df_goteo.get("tipo", pd.Series([""] * len(df_goteo), index=df_goteo.index))
@@ -261,6 +265,7 @@ def analizar_faceta_v(df_compras, df_faceta):
     mask_tramo_fijo = (
         df_goteo["seccion_albaran"].isin(["especialidad", "parafarmacia"])
         & df_goteo["neto"].gt(0)
+        & no_especialidad_cara
         & ~mask_linea_tp74
         & ~descripcion_normalizada.str.contains("club", na=False)
         & ~descripcion_normalizada.str.contains("bitransfer|bittransfer", na=False)

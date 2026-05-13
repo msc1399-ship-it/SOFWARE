@@ -629,10 +629,15 @@ def _lineas_elegibles_goteo_puro(df):
     detalle["iva"] = _serie_numerica(detalle, "iva")
     detalle["descripcion"] = detalle.get("descripcion", "").astype(str)
     descripcion_norm = detalle["descripcion"].str.lower()
+    no_especialidad_cara = ~detalle.get(
+        "es_especialidad_cara",
+        pd.Series(False, index=detalle.index),
+    ).fillna(False).astype(bool)
 
     mask = (
         detalle["tipo_compra"].eq("goteo")
         & detalle["seccion_albaran"].isin(["especialidad", "parafarmacia"])
+        & no_especialidad_cara
         & ~detalle["neto"].lt(0)
         & ~descripcion_norm.str.contains("club", na=False)
         & ~descripcion_norm.str.contains("avantia", na=False)
@@ -796,12 +801,17 @@ def _resumen_bidafarma(
     mask_bitransfer = seccion_norm.eq("bitransfer")
     mask_club = seccion_norm.eq("club")
     mask_avantia = seccion_norm.eq("avantia") | descripcion_norm.str.contains("avantia", na=False)
+    mask_especialidad_cara = lineas_resumen.get(
+        "es_especialidad_cara",
+        pd.Series(False, index=lineas_resumen.index),
+    ).fillna(False).astype(bool)
     mask_goteo_puro = (
         tipo_compra_norm.eq("goteo")
         & seccion_norm.isin(["especialidad", "parafarmacia"])
         & ~mask_bitransfer
         & ~mask_club
         & ~mask_avantia
+        & ~mask_especialidad_cara
     )
     mask_especialidad_normal = (
         mask_goteo_puro
@@ -825,16 +835,49 @@ def _resumen_bidafarma(
 
         bruto = _sumar_columna_real(bloque, "bruto")
         neto = _sumar_columna_real(bloque, "neto")
+        unidades = _sumar_columna_real(bloque, "unidades")
         coste_real = neto + coste_extra
         descuento = _descuento_pct(bruto, coste_real)
         resumen_bloques.append({
             "bloque": nombre,
+            "lineas": len(bloque),
+            "unidades": round(unidades, 2),
             "bruto_compra": round(bruto, 2),
             "neto_inicial": round(neto, 2),
             "coste_ajustado": round(coste_real, 2),
             "descuento_medio_pct": descuento,
+            "descuento_total_euros": None,
+            "descuento_medio_euros": None,
         })
         return {"bruto": bruto, "neto": neto, "coste": coste_real, "descuento": descuento}
+
+    def agregar_bloque_especialidad_cara():
+        bloque = lineas_resumen[mask_especialidad_cara].copy()
+        if bloque.empty:
+            return None
+
+        bruto = _sumar_columna_real(bloque, "bruto")
+        neto = _sumar_columna_real(bloque, "neto")
+        unidades = _sumar_columna_real(bloque, "unidades")
+        descuento_total = _sumar_columna_real(bloque, "descuento_especialidad_cara_euros")
+        descuento_medio = descuento_total / unidades if unidades else 0.0
+        resumen_bloques.append({
+            "bloque": "Especialidad cara",
+            "lineas": len(bloque),
+            "unidades": round(unidades, 2),
+            "bruto_compra": round(bruto, 2),
+            "neto_inicial": round(neto, 2),
+            "coste_ajustado": round(neto, 2),
+            "descuento_medio_pct": None,
+            "descuento_total_euros": round(descuento_total, 2),
+            "descuento_medio_euros": round(descuento_medio, 2),
+        })
+        return {
+            "bruto": bruto,
+            "neto": neto,
+            "coste": neto,
+            "descuento_medio_euros": descuento_medio,
+        }
 
     bloque_goteo_puro = agregar_bloque(
         "Goteo puro",
@@ -862,6 +905,7 @@ def _resumen_bidafarma(
             - (0.0 if not analisis_ajuste else analisis_ajuste["resumen"]["descuento_total"])
         ),
     )
+    bloque_especialidad_cara = agregar_bloque_especialidad_cara()
     bloque_parafarmacia = agregar_bloque(
         "Parafarmacia normal",
         mask_goteo_puro & seccion_norm.eq("parafarmacia"),
