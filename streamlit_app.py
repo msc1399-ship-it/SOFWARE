@@ -16,6 +16,7 @@ import modules.condiciones_bidafarma as condiciones_bidafarma
 import modules.maestro_laboratorios as maestro_laboratorios
 import modules.nomenclator_aemps as nomenclator_aemps
 import modules.ventas as ventas
+import modules.reporting as reporting
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -25,6 +26,7 @@ condiciones_bidafarma = importlib.reload(condiciones_bidafarma)
 maestro_laboratorios = importlib.reload(maestro_laboratorios)
 nomenclator_aemps = importlib.reload(nomenclator_aemps)
 ventas = importlib.reload(ventas)
+reporting = importlib.reload(reporting)
 
 DEBUG_PASSWORD = "CAMBIAR_CLAVE"
 try:
@@ -384,6 +386,56 @@ def _mostrar_resumen_especialidad_cara(df):
     if MODO_DEBUG:
         st.caption("Líneas detectadas como especialidad cara")
         st.dataframe(especialidad_cara[columnas_debug])
+
+
+def _guardar_analisis_distribuidora(proveedor_id, analisis):
+    analisis_actuales = st.session_state.get("analisis_distribuidora", {})
+    if not isinstance(analisis_actuales, dict):
+        analisis_actuales = {}
+    analisis_actuales[proveedor_id] = analisis
+    st.session_state["analisis_distribuidora"] = analisis_actuales
+
+
+def _mostrar_analisis_distribuidora(analisis):
+    if not analisis or not analisis.get("ok"):
+        st.warning((analisis or {}).get("mensaje", "No hay análisis disponible."))
+        return
+
+    resumen = analisis.get("resumen", {})
+    st.subheader(f"Análisis distribuidora · {analisis.get('proveedor', '')}")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Compra bruta", f"{resumen.get('compra_bruta_total', 0):.2f} €")
+    c2.metric("Compra neta", f"{resumen.get('compra_neta_total', 0):.2f} €")
+    c3.metric("Abonos", f"{resumen.get('abonos_totales', 0):.2f} €")
+    descuento = resumen.get("descuento_medio_general")
+    c4.metric("Desc. medio", "-" if descuento is None else f"{descuento:.2f}%")
+
+    periodo = resumen.get("periodo")
+    if periodo:
+        st.caption(f"Periodo analizado: {periodo.get('desde')} a {periodo.get('hasta')}")
+
+    desglose = analisis.get("desglose", pd.DataFrame())
+    if desglose is not None and not desglose.empty:
+        st.caption("Desglose por tipo de compra")
+        st.dataframe(desglose)
+
+    cargos = analisis.get("cargos", pd.DataFrame())
+    if cargos is not None and not cargos.empty:
+        st.caption("Cargos detectados")
+        st.dataframe(cargos)
+
+    especialidad_cara = analisis.get("especialidad_cara", pd.DataFrame())
+    if especialidad_cara is not None and not especialidad_cara.empty:
+        st.caption("Especialidad cara / RDL 4/2010")
+        st.dataframe(especialidad_cara)
+
+    top_impacto = analisis.get("top_impacto", pd.DataFrame())
+    if top_impacto is not None and not top_impacto.empty:
+        st.caption("Top impacto coste aparente vs coste real")
+        st.dataframe(top_impacto)
+    else:
+        st.info("Top impacto pendiente: no hay costes imputados suficientes para calcular diferencias.")
 
 
 def _serie_numerica(df, columna):
@@ -1041,16 +1093,29 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
         key=f"{proveedor_id}_factura_transfer",
     )
 
-    st.session_state[f"factura_normal_{proveedor_id}"] = factura_normal.name if factura_normal else None
-    st.session_state[f"factura_transfer_{proveedor_id}"] = factura_transfer.name if factura_transfer else None
+    st.session_state[f"factura_normal_{proveedor_id}"] = "cargada" if factura_normal else None
+    st.session_state[f"factura_transfer_{proveedor_id}"] = "cargada" if factura_transfer else None
 
     if factura_normal:
-        st.success(f"Factura NORMAL de {nombre_proveedor} cargada: {factura_normal.name}")
+        st.success(f"Factura NORMAL de {nombre_proveedor} cargada.")
     if factura_transfer:
-        st.success(f"Factura TRANSFER de {nombre_proveedor} cargada: {factura_transfer.name}")
+        st.success(f"Factura TRANSFER de {nombre_proveedor} cargada.")
 
     if df is None:
         st.warning("Sube archivos")
+        return
+
+    st.header("3️⃣ Análisis")
+    if st.button("Generar análisis distribuidora", key=f"generar_analisis_{proveedor_id}"):
+        analisis = reporting.generar_analisis_distribuidora(
+            df,
+            proveedor=proveedor_id,
+        )
+        _guardar_analisis_distribuidora(proveedor_id, analisis)
+
+    analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get(proveedor_id)
+    if analisis_guardado:
+        _mostrar_analisis_distribuidora(analisis_guardado)
 
 
 def render_facturas_laboratorios():
@@ -1061,13 +1126,25 @@ def render_facturas_laboratorios():
         accept_multiple_files=True,
         key="facturas_laboratorios_excel",
     )
-    st.session_state["facturas_laboratorios"] = [archivo.name for archivo in archivos] if archivos else []
+    st.session_state["facturas_laboratorios"] = ["cargado"] * len(archivos) if archivos else []
 
     if archivos:
         st.success(f"{len(archivos)} archivo(s) de laboratorios cargado(s).")
-        st.dataframe(pd.DataFrame({"archivo": [archivo.name for archivo in archivos]}))
+        if MODO_DEBUG:
+            st.dataframe(pd.DataFrame({"archivo": [archivo.name for archivo in archivos]}))
     else:
         st.info("Sube aquí los Excel de facturas de laboratorios. Más adelante añadiremos su lectura específica.")
+
+
+    if st.button("Generar análisis laboratorios", key="generar_analisis_laboratorios"):
+        st.session_state["analisis_laboratorios"] = {
+            "ok": False,
+            "mensaje": "Pendiente de implementación: análisis de facturas de laboratorio.",
+        }
+
+    analisis_laboratorios = st.session_state.get("analisis_laboratorios")
+    if analisis_laboratorios:
+        st.info(analisis_laboratorios["mensaje"])
 
 
 def render_ventas_farmacia():
@@ -1078,7 +1155,7 @@ def render_ventas_farmacia():
         accept_multiple_files=True,
         key="ventas_farmacia_excel",
     )
-    st.session_state["ventas_farmacia"] = [archivo.name for archivo in archivos] if archivos else []
+    st.session_state["ventas_farmacia"] = ["cargado"] * len(archivos) if archivos else []
 
     if archivos:
         ventas_normalizadas = []
@@ -1086,7 +1163,7 @@ def render_ventas_farmacia():
             try:
                 ventas_normalizadas.append(ventas.normalizar_ventas_erp(ventas.leer_tabla(archivo)))
             except ValueError as error:
-                st.error(f"No se pudo leer {archivo.name}: {error}")
+                st.error(f"No se pudo leer un archivo de ventas: {error}")
 
         if ventas_normalizadas:
             df_ventas = pd.concat(ventas_normalizadas, ignore_index=True)
@@ -1146,6 +1223,17 @@ def render_ventas_farmacia():
             "y el margen ERP se usará solo como comparación."
         )
 
+    if st.button("Generar análisis ventas", key="generar_analisis_ventas"):
+        st.session_state["analisis_ventas"] = {
+            "ok": False,
+            "mensaje": "Pendiente de implementación: cruce compras vs ventas.",
+        }
+
+    analisis_ventas = st.session_state.get("analisis_ventas")
+    if analisis_ventas:
+        st.info(analisis_ventas["mensaje"])
+
+
 def _normalizar_stock_farmacia(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["cn", "descripcion", "unidades_stock", "caducidad", "ultima_compra"])
@@ -1203,7 +1291,7 @@ def render_stock():
         try:
             df_stock = _normalizar_stock_farmacia(load_excel(archivo))
             _guardar_dataset("stock_farmacia_df", df_stock)
-            st.session_state["stock_farmacia"] = archivo.name
+            st.session_state["stock_farmacia"] = "cargado"
         except ValueError as error:
             st.error(f"No se pudo leer el stock de la farmacia: {error}")
             return
@@ -1241,6 +1329,17 @@ def render_stock():
         )
 
 
+    if st.button("Generar análisis stock", key="generar_analisis_stock"):
+        st.session_state["analisis_stock"] = {
+            "ok": False,
+            "mensaje": "Pendiente de implementación: análisis de stock.",
+        }
+
+    analisis_stock = st.session_state.get("analisis_stock")
+    if analisis_stock:
+        st.info(analisis_stock["mensaje"])
+
+
 def render_resumen():
     st.header("Resumen")
 
@@ -1250,8 +1349,8 @@ def render_resumen():
         filas.append({
             "seccion": nombre,
             "lineas_albaranes": 0 if df_proveedor is None else len(df_proveedor),
-            "factura_normal": st.session_state.get(f"factura_normal_{proveedor_id}") or "",
-            "factura_transfer": st.session_state.get(f"factura_transfer_{proveedor_id}") or "",
+            "factura_normal": "cargada" if st.session_state.get(f"factura_normal_{proveedor_id}") else "",
+            "factura_transfer": "cargada" if st.session_state.get(f"factura_transfer_{proveedor_id}") else "",
         })
 
     filas.append({
@@ -1270,12 +1369,33 @@ def render_resumen():
     filas.append({
         "seccion": "Stock",
         "lineas_albaranes": 0 if stock_df is None else len(stock_df),
-        "factura_normal": st.session_state.get("stock_farmacia") or "",
+        "factura_normal": "cargado" if st.session_state.get("stock_farmacia") else "",
         "factura_transfer": "",
     })
 
     st.dataframe(pd.DataFrame(filas))
     st.info("Este resumen queda preparado como punto de salida. En los siguientes pasos añadiremos los indicadores y la descarga Excel final.")
+
+
+    st.header("Resumen final de auditoría")
+    if st.button("Generar resumen final", key="generar_resumen_final_auditoria"):
+        analisis_distribuidora = st.session_state.get("analisis_distribuidora", {})
+        resumen_final = reporting.generar_resumen_final(
+            analisis_distribuidoras=list(analisis_distribuidora.values()) if isinstance(analisis_distribuidora, dict) else analisis_distribuidora,
+            analisis_laboratorios=st.session_state.get("analisis_laboratorios"),
+            analisis_ventas=st.session_state.get("analisis_ventas"),
+            analisis_stock=st.session_state.get("analisis_stock"),
+        )
+        st.session_state["resumen_final_auditoria"] = resumen_final
+
+    resumen_final = st.session_state.get("resumen_final_auditoria")
+    if resumen_final and resumen_final.get("ok"):
+        distribuidoras = resumen_final.get("distribuidoras", pd.DataFrame())
+        if not distribuidoras.empty:
+            st.caption("Consolidado temporal de distribuidoras")
+            st.dataframe(distribuidoras)
+    else:
+        st.info("Genera primero los análisis individuales.")
 
 
 def render_vida_pharma():
@@ -1287,6 +1407,8 @@ def render_vida_pharma():
     analisis_cargo_adicional = None
     resumen_conciliacion_bitransfer = None
     condicion_detectada = None
+    resultado_factura_normal = None
+    resultado_factura_transfer = None
 
     # =========================
     # 1. ALBARANES
@@ -1480,13 +1602,14 @@ def render_vida_pharma():
         # FACTURA NORMAL
         # -------------------------
         factura_normal = st.file_uploader("Factura NORMAL", type=["xlsx"], key="bidafarma_factura_normal")
-        st.session_state["factura_normal_bidafarma"] = factura_normal.name if factura_normal else None
+        st.session_state["factura_normal_bidafarma"] = "cargada" if factura_normal else None
 
         resultado = None
 
         if factura_normal:
 
             resultado = analizar_factura_bidafarma(factura_normal)
+            resultado_factura_normal = resultado
 
             df_goteo = df[df["tipo_compra"] == "goteo"]
 
@@ -1900,11 +2023,12 @@ def render_vida_pharma():
         # -------------------------
         analisis_transfer = None
         factura_transfer = st.file_uploader("Factura TRANSFER", type=["xlsx"], key="bidafarma_factura_transfer")
-        st.session_state["factura_transfer_bidafarma"] = factura_transfer.name if factura_transfer else None
+        st.session_state["factura_transfer_bidafarma"] = "cargada" if factura_transfer else None
 
         if factura_transfer:
 
             resultado_transfer = analizar_factura_transfer(factura_transfer)
+            resultado_factura_transfer = resultado_transfer
 
             df_transfer = df[df["tipo_compra"] == "transfer"]
 
@@ -2060,6 +2184,24 @@ def render_vida_pharma():
         if not resumen_final["tabla"].empty:
             st.caption("Resumen de compras y descuentos reales por bloque")
             st.dataframe(resumen_final["tabla"])
+
+    st.header("Generación de informe")
+    if st.button("Generar análisis distribuidora", key="generar_analisis_bidafarma"):
+        analisis = reporting.generar_analisis_distribuidora(
+            df,
+            proveedor="bidafarma",
+            resultado_factura_normal=resultado_factura_normal,
+            resultado_factura_transfer=resultado_factura_transfer,
+            analisis_faceta=analisis_faceta_final,
+            analisis_avantia=analisis_avantia,
+            resumen_bitransfer=resumen_conciliacion_bitransfer,
+            analisis_transfer=analisis_transfer,
+        )
+        _guardar_analisis_distribuidora("bidafarma", analisis)
+
+    analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
+    if analisis_guardado:
+        _mostrar_analisis_distribuidora(analisis_guardado)
 
 
 st.set_page_config(layout="wide")
