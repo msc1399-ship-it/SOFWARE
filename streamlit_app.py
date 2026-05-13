@@ -105,28 +105,6 @@ def _obtener_maestro_laboratorios():
     _asegurar_maestros_en_sesion()
 
     manual_df = st.session_state.get("maestro_laboratorios_df")
-    with col_efg:
-        equivalencias_file = st.file_uploader(
-            "Equivalencias EFG",
-            type=["xlsx"],
-            key="equivalencias_efg_file",
-            help=(
-                "Sube la base BASE_EQUIVALENCIAS_EFG_NOMENCLATOR_v2_LOGICA_DINAMICA.xlsx. "
-                "Solo identifica grupos, opciones y laboratorios EFG disponibles; no fija laboratorio recomendado."
-            ),
-        )
-
-        if equivalencias_file:
-            try:
-                efg_data = equivalencias_efg.leer_base_equivalencias_efg(equivalencias_file)
-                st.session_state["tabla_equivalencias_efg"] = efg_data["tabla_equivalencias_efg"]
-                st.session_state["grupos_homogeneos_efg"] = efg_data["grupos_homogeneos"]
-                st.session_state["opciones_por_grupo_efg"] = efg_data["opciones_por_grupo"]
-                st.session_state["resumen_equivalencias_efg"] = efg_data["resumen"]
-                st.session_state["equivalencias_efg_cargadas"] = True
-            except ValueError as error:
-                st.error(f"No se pudo leer la base de equivalencias EFG: {error}")
-
     ministerio_df = st.session_state.get("maestro_ministerio_df")
     aemps_df = st.session_state.get("maestro_medicamentos_aemps_df")
 
@@ -153,6 +131,29 @@ def _enriquecer_con_maestro(df):
     return maestro_laboratorios.enriquecer_con_laboratorio(df, maestro_df)
 
 
+def _render_uploader_equivalencias_efg():
+    equivalencias_file = st.file_uploader(
+        "Equivalencias EFG",
+        type=["xlsx"],
+        key="equivalencias_efg_file",
+        help=(
+            "Sube la base BASE_EQUIVALENCIAS_EFG_NOMENCLATOR_v2_LOGICA_DINAMICA.xlsx. "
+            "Solo identifica grupos, opciones y laboratorios EFG disponibles; no fija laboratorio recomendado."
+        ),
+    )
+
+    if equivalencias_file:
+        try:
+            efg_data = equivalencias_efg.leer_base_equivalencias_efg(equivalencias_file)
+            st.session_state["tabla_equivalencias_efg"] = efg_data["tabla_equivalencias_efg"]
+            st.session_state["grupos_homogeneos_efg"] = efg_data["grupos_homogeneos"]
+            st.session_state["opciones_por_grupo_efg"] = efg_data["opciones_por_grupo"]
+            st.session_state["resumen_equivalencias_efg"] = efg_data["resumen"]
+            st.session_state["equivalencias_efg_cargadas"] = True
+        except ValueError as error:
+            st.error(f"No se pudo leer la base de equivalencias EFG: {error}")
+
+
 def _render_base_maestra_laboratorios():
     _asegurar_maestros_en_sesion()
 
@@ -163,6 +164,9 @@ def _render_base_maestra_laboratorios():
     )
 
     col_ministerio, col_manual, col_aemps, col_efg = st.columns(4)
+
+    with col_efg:
+        _render_uploader_equivalencias_efg()
 
     with col_ministerio:
         ministerio_file = st.file_uploader(
