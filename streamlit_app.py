@@ -17,6 +17,7 @@ import modules.maestro_laboratorios as maestro_laboratorios
 import modules.nomenclator_aemps as nomenclator_aemps
 import modules.ventas as ventas
 import modules.reporting as reporting
+import modules.equivalencias_efg as equivalencias_efg
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -27,6 +28,7 @@ maestro_laboratorios = importlib.reload(maestro_laboratorios)
 nomenclator_aemps = importlib.reload(nomenclator_aemps)
 ventas = importlib.reload(ventas)
 reporting = importlib.reload(reporting)
+equivalencias_efg = importlib.reload(equivalencias_efg)
 
 DEBUG_PASSWORD = "CAMBIAR_CLAVE"
 try:
@@ -103,6 +105,28 @@ def _obtener_maestro_laboratorios():
     _asegurar_maestros_en_sesion()
 
     manual_df = st.session_state.get("maestro_laboratorios_df")
+    with col_efg:
+        equivalencias_file = st.file_uploader(
+            "Equivalencias EFG",
+            type=["xlsx"],
+            key="equivalencias_efg_file",
+            help=(
+                "Sube la base BASE_EQUIVALENCIAS_EFG_NOMENCLATOR_v2_LOGICA_DINAMICA.xlsx. "
+                "Solo identifica grupos, opciones y laboratorios EFG disponibles; no fija laboratorio recomendado."
+            ),
+        )
+
+        if equivalencias_file:
+            try:
+                efg_data = equivalencias_efg.leer_base_equivalencias_efg(equivalencias_file)
+                st.session_state["tabla_equivalencias_efg"] = efg_data["tabla_equivalencias_efg"]
+                st.session_state["grupos_homogeneos_efg"] = efg_data["grupos_homogeneos"]
+                st.session_state["opciones_por_grupo_efg"] = efg_data["opciones_por_grupo"]
+                st.session_state["resumen_equivalencias_efg"] = efg_data["resumen"]
+                st.session_state["equivalencias_efg_cargadas"] = True
+            except ValueError as error:
+                st.error(f"No se pudo leer la base de equivalencias EFG: {error}")
+
     ministerio_df = st.session_state.get("maestro_ministerio_df")
     aemps_df = st.session_state.get("maestro_medicamentos_aemps_df")
 
@@ -138,7 +162,7 @@ def _render_base_maestra_laboratorios():
         "La base manual servirá para completar huecos y AEMPS quedará como apoyo para medicamentos."
     )
 
-    col_ministerio, col_manual, col_aemps = st.columns(3)
+    col_ministerio, col_manual, col_aemps, col_efg = st.columns(4)
 
     with col_ministerio:
         ministerio_file = st.file_uploader(
@@ -204,6 +228,10 @@ def _render_base_maestra_laboratorios():
     ministerio_df = st.session_state.get("maestro_ministerio_df")
     manual_df = st.session_state.get("maestro_laboratorios_df")
     aemps_df = st.session_state.get("maestro_medicamentos_aemps_df")
+    tabla_equivalencias_efg = st.session_state.get("tabla_equivalencias_efg")
+    grupos_homogeneos_efg = st.session_state.get("grupos_homogeneos_efg")
+    opciones_por_grupo_efg = st.session_state.get("opciones_por_grupo_efg")
+    resumen_equivalencias_efg = st.session_state.get("resumen_equivalencias_efg")
     maestro_df = _obtener_maestro_laboratorios()
 
     if ministerio_df is not None and not ministerio_df.empty:
@@ -252,6 +280,28 @@ def _render_base_maestra_laboratorios():
         st.caption(
             f"Base manual activa: {st.session_state.get('maestro_laboratorios_nombre', 'base manual cargada')}"
         )
+
+    if resumen_equivalencias_efg:
+        st.subheader("Equivalencias EFG")
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("Productos", resumen_equivalencias_efg.get("productos", 0))
+        e2.metric("Grupos homogéneos", resumen_equivalencias_efg.get("grupos_homogeneos", 0))
+        e3.metric("Opciones EFG", resumen_equivalencias_efg.get("opciones_efg", 0))
+        e4.metric("Marcas con alternativa", resumen_equivalencias_efg.get("marcas_con_alternativa_efg", 0))
+        st.info(
+            "Base EFG cargada como tabla maestra neutra. No contiene laboratorio recomendado fijo; "
+            "la recomendación se calculará dinámicamente con datos reales de cada farmacia."
+        )
+        if MODO_DEBUG:
+            if tabla_equivalencias_efg is not None and not tabla_equivalencias_efg.empty:
+                st.caption("Preview tabla_equivalencias_efg")
+                st.dataframe(tabla_equivalencias_efg.head(20))
+            if grupos_homogeneos_efg is not None and not grupos_homogeneos_efg.empty:
+                st.caption("Preview grupos_homogeneos")
+                st.dataframe(grupos_homogeneos_efg.head(20))
+            if opciones_por_grupo_efg is not None and not opciones_por_grupo_efg.empty:
+                st.caption("Preview opciones_por_grupo")
+                st.dataframe(opciones_por_grupo_efg.head(20))
 
     if maestro_df is not None and not maestro_df.empty:
         m1, m2 = st.columns(2)
