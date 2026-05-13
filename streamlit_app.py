@@ -6,7 +6,7 @@ import unicodedata
 
 from modules.ingestion import load_excel
 from modules.parser import parse_sections
-from modules.classification import normalize_columns
+from modules.classification import normalize_columns, clasificar_especialidad_cara
 from modules.analytics import analizar_factura_bidafarma, analizar_factura_transfer
 import modules.bitransfer as bitransfer
 import modules.servicios as servicios
@@ -282,6 +282,7 @@ def _leer_albaranes_genericos(uploaded_files, proveedor, tipo_compra):
 
         df_temp = parse_sections(df_temp)
         df_temp = _enriquecer_con_maestro(df_temp)
+        df_temp = clasificar_especialidad_cara(df_temp)
         dfs.append(df_temp)
 
     return dfs
@@ -330,6 +331,59 @@ def _mostrar_vistas_albaranes(df):
         c4.metric("Neto", f"{total_neto:.1f} €")
         c5.metric("Desc %", round(descuento, 2))
         c6.metric("Abonos", f"{abs(total_abonos):.1f} €")
+
+        _mostrar_resumen_especialidad_cara(compras)
+
+
+def _mostrar_resumen_especialidad_cara(df):
+    if df is None or df.empty or "es_especialidad_cara" not in df.columns:
+        return
+
+    especialidad_cara = df[df["es_especialidad_cara"]].copy()
+    if especialidad_cara.empty:
+        return
+
+    for columna in ["bruto", "neto", "descuento_especialidad_cara_euros"]:
+        if columna in especialidad_cara.columns:
+            especialidad_cara[columna] = pd.to_numeric(especialidad_cara[columna], errors="coerce").fillna(0.0)
+        else:
+            especialidad_cara[columna] = 0.0
+
+    lineas = len(especialidad_cara)
+    bruto_total = especialidad_cara["bruto"].sum()
+    neto_total = especialidad_cara["neto"].sum()
+    descuento_total = especialidad_cara["descuento_especialidad_cara_euros"].sum()
+    descuento_medio = descuento_total / lineas if lineas else 0.0
+
+    st.subheader("Especialidad cara / RDL 4/2010")
+    ec1, ec2, ec3, ec4, ec5 = st.columns(5)
+    ec1.metric("Líneas", lineas)
+    ec2.metric("Bruto", f"{bruto_total:.2f} €")
+    ec3.metric("Neto", f"{neto_total:.2f} €")
+    ec4.metric("Descuento €", f"{descuento_total:.2f} €")
+    ec5.metric("Desc. medio/línea", f"{descuento_medio:.2f} €")
+
+    columnas_debug = [
+        "cn",
+        "descripcion",
+        "proveedor",
+        "tipo_compra",
+        "iva",
+        "unidades",
+        "bruto",
+        "neto",
+        "bruto_unitario",
+        "neto_unitario",
+        "tipo_especialidad_cara",
+        "descuento_especialidad_cara_euros",
+        "base_iva4_total",
+        "base_iva4_especialidad_cara",
+        "base_iva4_sujeta_ajuste",
+    ]
+    columnas_debug = [col for col in columnas_debug if col in especialidad_cara.columns]
+    if MODO_DEBUG:
+        st.caption("Líneas detectadas como especialidad cara")
+        st.dataframe(especialidad_cara[columnas_debug])
 
 
 def _serie_numerica(df, columna):
@@ -600,11 +654,16 @@ def _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta=None
     df_base["neto"] = _serie_numerica(df_base, "neto")
     df_base["iva"] = _serie_numerica(df_base, "iva")
     descripcion_norm = df_base.get("descripcion", "").astype(str).str.lower()
+    no_especialidad_cara = ~df_base.get(
+        "es_especialidad_cara",
+        pd.Series(False, index=df_base.index),
+    ).fillna(False).astype(bool)
 
     mask_elegible = (
         df_base["tipo_compra"].eq("goteo")
         & df_base["iva"].eq(4)
         & df_base["seccion_albaran"].eq("especialidad")
+        & no_especialidad_cara
         & (df_base["bruto"].abs() <= 96)
         & df_base["bruto"].ne(0)
         & ~descripcion_norm.str.contains("club", na=False)
@@ -1235,6 +1294,7 @@ def render_vida_pharma():
 
             df_temp = parse_sections(df_temp)
             df_temp = _enriquecer_con_maestro(df_temp)
+            df_temp = clasificar_especialidad_cara(df_temp)
             dfs.append(df_temp)
 
     # TRANSFER
@@ -1253,6 +1313,7 @@ def render_vida_pharma():
 
             df_temp = parse_sections(df_temp)
             df_temp = _enriquecer_con_maestro(df_temp)
+            df_temp = clasificar_especialidad_cara(df_temp)
             dfs.append(df_temp)
 
     if dfs:
