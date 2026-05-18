@@ -32,12 +32,16 @@ reporting = importlib.reload(reporting)
 equivalencias_efg = importlib.reload(equivalencias_efg)
 ai_advisor = importlib.reload(ai_advisor)
 
-DEBUG_PASSWORD = "CAMBIAR_CLAVE"
+try:
+    DEBUG_PASSWORD = st.secrets.get("DEBUG_PASSWORD", "")
+except Exception:
+    DEBUG_PASSWORD = ""
 try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
 except Exception:
     APP_PASSWORD = ""
 MODO_DEBUG = False
+MAX_UPLOAD_MB = 50
 
 PROVEEDORES_BASE = {
     "cofares": "cofares",
@@ -81,6 +85,13 @@ def _mostrar_dataframe_debug(df, mensaje="Vista completa oculta por privacidad."
         st.caption(f"{mensaje} Activa MODO_DEBUG para verla.")
 
 
+def _mostrar_error_procesamiento(mensaje, error=None):
+    if MODO_DEBUG and error is not None:
+        st.error(f"{mensaje}: {error}")
+    else:
+        st.error(mensaje)
+
+
 def _verificar_acceso_app():
     if st.session_state.get("app_authenticated"):
         return
@@ -91,12 +102,40 @@ def _verificar_acceso_app():
             password = st.text_input("Contraseña", type="password")
             submitted = st.form_submit_button("Entrar")
 
-        if submitted and password == APP_PASSWORD:
+        if submitted and APP_PASSWORD and password == APP_PASSWORD:
             st.session_state["app_authenticated"] = True
             st.rerun()
 
         st.warning("Acceso restringido")
         st.stop()
+
+
+def _validar_archivo_subido(uploaded_file, etiqueta="archivo", extensiones=("xlsx",), max_mb=MAX_UPLOAD_MB):
+    if uploaded_file is None:
+        return False
+
+    nombre = str(getattr(uploaded_file, "name", ""))
+    extension = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+    if extension not in extensiones:
+        st.error(f"{etiqueta}: formato no permitido. Sube únicamente archivos {', '.join('.' + ext for ext in extensiones)}.")
+        return False
+
+    tamano = getattr(uploaded_file, "size", None)
+    if tamano is not None and tamano > max_mb * 1024 * 1024:
+        st.error(f"{etiqueta}: archivo demasiado grande. Límite máximo: {max_mb} MB.")
+        return False
+
+    return True
+
+
+def _filtrar_archivos_validos(uploaded_files, etiqueta="archivo", extensiones=("xlsx",), max_mb=MAX_UPLOAD_MB):
+    if not uploaded_files:
+        return []
+    return [
+        uploaded_file
+        for uploaded_file in uploaded_files
+        if _validar_archivo_subido(uploaded_file, etiqueta, extensiones=extensiones, max_mb=max_mb)
+    ]
 
 
 def _asegurar_maestros_en_sesion():
@@ -145,6 +184,9 @@ def _render_uploader_equivalencias_efg():
     )
 
     if equivalencias_file:
+        if not _validar_archivo_subido(equivalencias_file, "Equivalencias EFG"):
+            equivalencias_file = None
+    if equivalencias_file:
         try:
             efg_data = equivalencias_efg.leer_base_equivalencias_efg(equivalencias_file)
             st.session_state["tabla_equivalencias_efg"] = efg_data["tabla_equivalencias_efg"]
@@ -153,7 +195,7 @@ def _render_uploader_equivalencias_efg():
             st.session_state["resumen_equivalencias_efg"] = efg_data["resumen"]
             st.session_state["equivalencias_efg_cargadas"] = True
         except ValueError as error:
-            st.error(f"No se pudo leer la base de equivalencias EFG: {error}")
+            _mostrar_error_procesamiento("No se pudo leer la base de equivalencias EFG.", error)
 
 
 def _render_base_maestra_laboratorios():
@@ -173,7 +215,7 @@ def _render_base_maestra_laboratorios():
     with col_ministerio:
         ministerio_file = st.file_uploader(
             "Nomenclátor facturación Ministerio",
-            type=["xls", "xlsx", "csv"],
+            type=["xlsx"],
             key="maestro_ministerio_file",
             help=(
                 "Sube aquí el nomenclátor de facturación del Ministerio. "
@@ -182,20 +224,23 @@ def _render_base_maestra_laboratorios():
         )
 
         if ministerio_file:
+            if not _validar_archivo_subido(ministerio_file, "Nomenclátor facturación Ministerio"):
+                ministerio_file = None
+        if ministerio_file:
             try:
                 ministerio_df = maestro_laboratorios.leer_maestro_laboratorios(ministerio_file)
                 ministerio_df["fuente_maestro"] = "ministerio_facturacion"
                 if "tipo_producto" not in ministerio_df.columns:
                     ministerio_df["tipo_producto"] = None
                 st.session_state["maestro_ministerio_df"] = ministerio_df
-                st.session_state["maestro_ministerio_nombre"] = ministerio_file.name
+                st.session_state["maestro_ministerio_nombre"] = "cargado"
             except ValueError as error:
-                st.error(f"No se pudo leer el nomenclátor del Ministerio: {error}")
+                _mostrar_error_procesamiento("No se pudo leer el nomenclátor del Ministerio.", error)
 
     with col_manual:
         maestro_file = st.file_uploader(
             "Base maestra manual CN / laboratorio",
-            type=["xls", "xlsx", "csv"],
+            type=["xlsx"],
             key="maestro_cn_laboratorio_file",
             help=(
                 "Esta base manual nos servirá para completar fuentes no cubiertas por AEMPS, "
@@ -204,13 +249,16 @@ def _render_base_maestra_laboratorios():
         )
 
         if maestro_file:
+            if not _validar_archivo_subido(maestro_file, "Base maestra manual"):
+                maestro_file = None
+        if maestro_file:
             try:
                 maestro_df = maestro_laboratorios.leer_maestro_laboratorios(maestro_file)
                 maestro_df["fuente_maestro"] = "manual"
                 st.session_state["maestro_laboratorios_df"] = maestro_df
-                st.session_state["maestro_laboratorios_nombre"] = maestro_file.name
+                st.session_state["maestro_laboratorios_nombre"] = "cargado"
             except ValueError as error:
-                st.error(f"No se pudo leer la base maestra manual: {error}")
+                _mostrar_error_procesamiento("No se pudo leer la base maestra manual.", error)
 
     with col_aemps:
         nomenclator_file = st.file_uploader(
@@ -227,9 +275,9 @@ def _render_base_maestra_laboratorios():
             try:
                 nomenclator_df = nomenclator_aemps.leer_nomenclator_aemps(nomenclator_file)
                 st.session_state["maestro_medicamentos_aemps_df"] = nomenclator_df
-                st.session_state["maestro_medicamentos_aemps_nombre"] = nomenclator_file.name
+                st.session_state["maestro_medicamentos_aemps_nombre"] = "cargado"
             except ValueError as error:
-                st.error(f"No se pudo leer el Nomenclátor AEMPS: {error}")
+                _mostrar_error_procesamiento("No se pudo leer el Nomenclátor AEMPS.", error)
 
     ministerio_df = st.session_state.get("maestro_ministerio_df")
     manual_df = st.session_state.get("maestro_laboratorios_df")
@@ -328,7 +376,7 @@ def _leer_albaranes_genericos(uploaded_files, proveedor, tipo_compra):
     if not uploaded_files:
         return dfs
 
-    for uploaded_file in uploaded_files:
+    for uploaded_file in _filtrar_archivos_validos(uploaded_files, f"Albaranes {proveedor} {tipo_compra}"):
         df_temp = normalize_columns(load_excel(uploaded_file))
         df_temp.columns = [c.lower().strip() for c in df_temp.columns]
         df_temp["proveedor"] = proveedor
@@ -1215,6 +1263,10 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
         type=["xlsx"],
         key=f"{proveedor_id}_factura_transfer",
     )
+    if factura_normal and not _validar_archivo_subido(factura_normal, f"Factura normal {nombre_proveedor}"):
+        factura_normal = None
+    if factura_transfer and not _validar_archivo_subido(factura_transfer, f"Factura transfer {nombre_proveedor}"):
+        factura_transfer = None
 
     st.session_state[f"factura_normal_{proveedor_id}"] = "cargada" if factura_normal else None
     st.session_state[f"factura_transfer_{proveedor_id}"] = "cargada" if factura_transfer else None
@@ -1253,9 +1305,11 @@ def render_facturas_laboratorios():
     st.session_state["facturas_laboratorios"] = ["cargado"] * len(archivos) if archivos else []
 
     if archivos:
+        archivos = _filtrar_archivos_validos(archivos, "Facturas de laboratorios")
+    if archivos:
         st.success(f"{len(archivos)} archivo(s) de laboratorios cargado(s).")
         if MODO_DEBUG:
-            st.dataframe(pd.DataFrame({"archivo": [archivo.name for archivo in archivos]}))
+            st.dataframe(pd.DataFrame({"archivo": [f"archivo_{idx + 1}" for idx, _ in enumerate(archivos)]}))
     else:
         st.info("Sube aquí los Excel de facturas de laboratorios. Más adelante añadiremos su lectura específica.")
 
@@ -1275,19 +1329,21 @@ def render_ventas_farmacia():
     st.header("Ventas farmacia")
     archivos = st.file_uploader(
         "Sube ventas de la farmacia",
-        type=["xlsx", "xls", "csv"],
+        type=["xlsx"],
         accept_multiple_files=True,
         key="ventas_farmacia_excel",
     )
     st.session_state["ventas_farmacia"] = ["cargado"] * len(archivos) if archivos else []
 
     if archivos:
+        archivos = _filtrar_archivos_validos(archivos, "Ventas farmacia")
+    if archivos:
         ventas_normalizadas = []
         for archivo in archivos:
             try:
                 ventas_normalizadas.append(ventas.normalizar_ventas_erp(ventas.leer_tabla(archivo)))
             except ValueError as error:
-                st.error(f"No se pudo leer un archivo de ventas: {error}")
+                _mostrar_error_procesamiento("No se pudo leer un archivo de ventas.", error)
 
         if ventas_normalizadas:
             df_ventas = pd.concat(ventas_normalizadas, ignore_index=True)
@@ -1406,18 +1462,21 @@ def render_stock():
     st.header("Stock")
     archivo = st.file_uploader(
         "Sube el stock de la farmacia",
-        type=["xlsx", "xls", "csv"],
+        type=["xlsx"],
         key="stock_farmacia_excel",
     )
 
     df_stock = None
+    if archivo:
+        if not _validar_archivo_subido(archivo, "Stock farmacia"):
+            archivo = None
     if archivo:
         try:
             df_stock = _normalizar_stock_farmacia(load_excel(archivo))
             _guardar_dataset("stock_farmacia_df", df_stock)
             st.session_state["stock_farmacia"] = "cargado"
         except ValueError as error:
-            st.error(f"No se pudo leer el stock de la farmacia: {error}")
+            _mostrar_error_procesamiento("No se pudo leer el stock de la farmacia.", error)
             return
 
     if df_stock is None:
@@ -1564,7 +1623,7 @@ def render_vida_pharma():
 
     # GOTE0
     if uploaded_files:
-        for uploaded_file in uploaded_files:
+        for uploaded_file in _filtrar_archivos_validos(uploaded_files, "Albaranes Bidafarma goteo"):
             df_faceta_temp = faceta.leer_albaran_faceta_v(uploaded_file)
             if df_faceta_temp is not None:
                 faceta_frames.append(df_faceta_temp)
@@ -1591,7 +1650,7 @@ def render_vida_pharma():
 
     # TRANSFER
     if uploaded_transfer:
-        for uploaded_file in uploaded_transfer:
+        for uploaded_file in _filtrar_archivos_validos(uploaded_transfer, "Albaranes Bidafarma transfer"):
             df_temp = normalize_columns(load_excel(uploaded_file))
             df_temp.columns = [c.lower().strip() for c in df_temp.columns]
 
@@ -1728,6 +1787,8 @@ def render_vida_pharma():
         # FACTURA NORMAL
         # -------------------------
         factura_normal = st.file_uploader("Factura NORMAL", type=["xlsx"], key="bidafarma_factura_normal")
+        if factura_normal and not _validar_archivo_subido(factura_normal, "Factura normal Bidafarma"):
+            factura_normal = None
         st.session_state["factura_normal_bidafarma"] = "cargada" if factura_normal else None
 
         resultado = None
@@ -1870,6 +1931,9 @@ def render_vida_pharma():
                 )
 
                 if excel_avantia:
+                    if not _validar_archivo_subido(excel_avantia, "Cuadro rentabilidad Avantia"):
+                        excel_avantia = None
+                if excel_avantia:
                     try:
                         cargos_avantia = avantia.leer_cuadro_rentabilidad_avantia(excel_avantia)
                         analisis_avantia = avantia.analizar_avantia(df, resultado["gastos"], cargos_avantia)
@@ -1899,7 +1963,7 @@ def render_vida_pharma():
                                 )
 
                     except ValueError as error:
-                        st.error(f"No se pudo leer el cuadro rentabilidad Avantia: {error}")
+                        _mostrar_error_procesamiento("No se pudo leer el cuadro rentabilidad Avantia.", error)
                 else:
                     st.info(
                         "Se ha detectado Avantia por factura o albaranes. "
@@ -1942,6 +2006,9 @@ def render_vida_pharma():
                 df_bt_compras = None
 
                 if excel_consumos_bitransfer:
+                    if not _validar_archivo_subido(excel_consumos_bitransfer, "Cuadro resumen BitTransfer"):
+                        excel_consumos_bitransfer = None
+                if excel_consumos_bitransfer:
                     try:
                         resumen_consumos = bitransfer.leer_cuadro_resumen_consumos(excel_consumos_bitransfer)
 
@@ -1956,8 +2023,11 @@ def render_vida_pharma():
                             st.dataframe(resumen_consumos["plataformas"])
 
                     except ValueError as error:
-                        st.error(f"No se pudo leer el cuadro resumen de consumos: {error}")
+                        _mostrar_error_procesamiento("No se pudo leer el cuadro resumen de consumos.", error)
 
+                if excel_compras_bitransfer:
+                    if not _validar_archivo_subido(excel_compras_bitransfer, "Listado compras BitTransfer"):
+                        excel_compras_bitransfer = None
                 if excel_compras_bitransfer:
                     try:
                         df_bt_compras = bitransfer.leer_listado_compras_bitransfer(excel_compras_bitransfer)
@@ -1976,7 +2046,7 @@ def render_vida_pharma():
                         )
 
                     except ValueError as error:
-                        st.error(f"No se pudo leer el listado de compras BitTransfer: {error}")
+                        _mostrar_error_procesamiento("No se pudo leer el listado de compras BitTransfer.", error)
 
                 if resumen_consumos is not None and df_bt_compras is not None:
                     try:
@@ -2061,6 +2131,9 @@ def render_vida_pharma():
                                 )
 
                                 if excel_plataforma:
+                                    if not _validar_archivo_subido(excel_plataforma, f"Listado productos plataforma {indice}"):
+                                        excel_plataforma = None
+                                if excel_plataforma:
                                     try:
                                         df_plataforma = bitransfer.leer_listado_compras_bitransfer(excel_plataforma)
                                         df_plataforma = _enriquecer_con_maestro(df_plataforma)
@@ -2074,7 +2147,7 @@ def render_vida_pharma():
                                         )
 
                     except ValueError as error:
-                        st.error(f"No se pudo conciliar BitTransfer: {error}")
+                        _mostrar_error_procesamiento("No se pudo conciliar BitTransfer.", error)
 
             if resultado is not None and not resultado["gastos"].empty:
                 gestion_factura = float(resultado["gastos"].loc[
@@ -2149,6 +2222,8 @@ def render_vida_pharma():
         # -------------------------
         analisis_transfer = None
         factura_transfer = st.file_uploader("Factura TRANSFER", type=["xlsx"], key="bidafarma_factura_transfer")
+        if factura_transfer and not _validar_archivo_subido(factura_transfer, "Factura transfer Bidafarma"):
+            factura_transfer = None
         st.session_state["factura_transfer_bidafarma"] = "cargada" if factura_transfer else None
 
         if factura_transfer:
@@ -2434,7 +2509,7 @@ st.title("📊 Auditoría de Compras Farmacia")
 _verificar_acceso_app()
 
 clave_modo_auditor = st.sidebar.text_input("Clave modo auditor", type="password")
-MODO_DEBUG = clave_modo_auditor == DEBUG_PASSWORD
+MODO_DEBUG = bool(DEBUG_PASSWORD) and clave_modo_auditor == DEBUG_PASSWORD
 
 if st.button("Borrar datos cargados"):
     st.session_state.clear()

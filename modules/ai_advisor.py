@@ -1,5 +1,3 @@
-import json
-
 import pandas as pd
 
 
@@ -235,13 +233,3 @@ def generar_recomendaciones_ia(
         "OPENAI_API_KEY está configurada, pero esta versión aún usa reglas locales para evitar enviar datos fuera de la app."
     )
     return recomendaciones
-
-
-def payload_debug_json(contexto_farmacia, analisis_distribuidora, analisis_ventas=None, analisis_stock=None):
-    payload = construir_payload_agregado(
-        contexto_farmacia,
-        analisis_distribuidora,
-        analisis_ventas=analisis_ventas,
-        analisis_stock=analisis_stock,
-    )
-    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
