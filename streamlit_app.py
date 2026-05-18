@@ -534,18 +534,6 @@ def render_recomendaciones_ia():
         analisis_ventas = st.session_state.get("analisis_ventas")
         analisis_stock = st.session_state.get("analisis_stock")
 
-        if MODO_DEBUG:
-            st.caption("Payload agregado enviado al módulo IA")
-            st.code(
-                ai_advisor.payload_debug_json(
-                    contexto,
-                    analisis,
-                    analisis_ventas=analisis_ventas,
-                    analisis_stock=analisis_stock,
-                ),
-                language="json",
-            )
-
         recomendaciones = ai_advisor.generar_recomendaciones_ia(
             contexto,
             analisis,
