@@ -2258,6 +2258,103 @@ def render_vida_pharma():
         _mostrar_analisis_distribuidora(analisis_guardado)
 
 
+def render_contexto_farmacia():
+    st.subheader("Contexto de farmacia")
+
+    tipo_zona_opciones = [
+        "urbana",
+        "rural",
+        "turística",
+        "costa",
+        "montaña",
+        "barrio residencial",
+        "zona hospitalaria",
+        "centro de salud cercano",
+        "otra",
+    ]
+    epoca_opciones = ["invierno", "primavera", "verano", "otoño"]
+    campanas_opciones = [
+        "gripe/resfriado",
+        "alergia",
+        "protección solar",
+        "vuelta al cole",
+        "Navidad",
+        "Semana Santa",
+        "turismo verano",
+        "ola de calor",
+        "dermocosmética",
+        "ninguna",
+    ]
+    perfil_opciones = [
+        "alta receta",
+        "alta parafarmacia",
+        "paciente crónico",
+        "familias/pediatría",
+        "turista",
+        "dermocosmética",
+        "farmacia de paso",
+        "farmacia rural",
+        "alto volumen",
+    ]
+
+    contexto_previo = st.session_state.get("contexto_farmacia", {})
+
+    c1, c2 = st.columns(2)
+    with c1:
+        provincia_ciudad = st.text_input(
+            "Provincia / ciudad",
+            value=contexto_previo.get("provincia_ciudad", ""),
+            key="contexto_provincia_ciudad",
+        )
+        tipo_zona = st.selectbox(
+            "Tipo de zona",
+            tipo_zona_opciones,
+            index=tipo_zona_opciones.index(contexto_previo.get("tipo_zona", "urbana"))
+            if contexto_previo.get("tipo_zona", "urbana") in tipo_zona_opciones else 0,
+            key="contexto_tipo_zona",
+        )
+        epoca_ano = st.selectbox(
+            "Época del año",
+            epoca_opciones,
+            index=epoca_opciones.index(contexto_previo.get("epoca_ano", "invierno"))
+            if contexto_previo.get("epoca_ano", "invierno") in epoca_opciones else 0,
+            key="contexto_epoca_ano",
+        )
+
+    with c2:
+        campana_activa = st.multiselect(
+            "Campaña activa",
+            campanas_opciones,
+            default=contexto_previo.get("campana_activa", ["ninguna"]),
+            key="contexto_campana_activa",
+        )
+        perfil_farmacia = st.multiselect(
+            "Perfil principal de farmacia",
+            perfil_opciones,
+            default=contexto_previo.get("perfil_farmacia", []),
+            key="contexto_perfil_farmacia",
+        )
+
+    contexto = {
+        "provincia_ciudad": provincia_ciudad.strip(),
+        "tipo_zona": tipo_zona,
+        "epoca_ano": epoca_ano,
+        "campana_activa": campana_activa,
+        "perfil_farmacia": perfil_farmacia,
+    }
+    st.session_state["contexto_farmacia"] = contexto
+
+    resumen = pd.DataFrame([
+        {"campo": "Provincia / ciudad", "valor": contexto["provincia_ciudad"] or "sin indicar"},
+        {"campo": "Tipo de zona", "valor": contexto["tipo_zona"]},
+        {"campo": "Época del año", "valor": contexto["epoca_ano"]},
+        {"campo": "Campaña activa", "valor": ", ".join(contexto["campana_activa"]) or "sin indicar"},
+        {"campo": "Perfil principal", "valor": ", ".join(contexto["perfil_farmacia"]) or "sin indicar"},
+    ])
+    st.caption("Resumen visual del contexto preparado para futuras propuestas de pedido")
+    st.dataframe(resumen, hide_index=True)
+
+
 st.set_page_config(layout="wide")
 st.title("📊 Auditoría de Compras Farmacia")
 
@@ -2272,6 +2369,9 @@ if st.button("Borrar datos cargados"):
 
 with st.expander("Base maestra CN / laboratorio", expanded=False):
     _render_base_maestra_laboratorios()
+
+with st.expander("Contexto de farmacia", expanded=False):
+    render_contexto_farmacia()
 
 seccion_activa = st.radio(
     "Selecciona el apartado de trabajo",
