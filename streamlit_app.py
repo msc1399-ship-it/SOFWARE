@@ -18,6 +18,7 @@ import modules.nomenclator_aemps as nomenclator_aemps
 import modules.ventas as ventas
 import modules.reporting as reporting
 import modules.equivalencias_efg as equivalencias_efg
+import modules.ai_advisor as ai_advisor
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -29,6 +30,7 @@ nomenclator_aemps = importlib.reload(nomenclator_aemps)
 ventas = importlib.reload(ventas)
 reporting = importlib.reload(reporting)
 equivalencias_efg = importlib.reload(equivalencias_efg)
+ai_advisor = importlib.reload(ai_advisor)
 
 DEBUG_PASSWORD = "CAMBIAR_CLAVE"
 try:
@@ -490,6 +492,85 @@ def _mostrar_analisis_distribuidora(analisis):
         st.dataframe(top_impacto)
     else:
         st.info("Top impacto pendiente: no hay costes imputados suficientes para calcular diferencias.")
+
+
+def _obtener_analisis_distribuidora_principal():
+    analisis_distribuidora = st.session_state.get("analisis_distribuidora", {})
+    if isinstance(analisis_distribuidora, dict):
+        for analisis in analisis_distribuidora.values():
+            if analisis and analisis.get("ok"):
+                return analisis
+    elif analisis_distribuidora and analisis_distribuidora.get("ok"):
+        return analisis_distribuidora
+    return None
+
+
+def _mostrar_lista_recomendaciones(titulo, elementos):
+    elementos = elementos or []
+    if not elementos:
+        return
+    st.markdown(f"**{titulo}**")
+    for elemento in elementos[:5]:
+        st.write(f"- {elemento}")
+
+
+def render_recomendaciones_ia():
+    analisis = _obtener_analisis_distribuidora_principal()
+    resumen_final = st.session_state.get("resumen_final_auditoria")
+    if not analisis and not resumen_final:
+        return
+
+    st.header("Recomendaciones asistidas por IA")
+    st.caption(
+        "Se generan con datos agregados y anonimizados. No se envían facturas, albaranes completos ni documentos originales."
+    )
+
+    if st.button("Generar recomendaciones IA", key="generar_recomendaciones_ia"):
+        if not analisis:
+            st.warning("Genera primero un análisis de distribuidora para alimentar las recomendaciones.")
+            return
+
+        contexto = st.session_state.get("contexto_farmacia", {})
+        analisis_ventas = st.session_state.get("analisis_ventas")
+        analisis_stock = st.session_state.get("analisis_stock")
+
+        if MODO_DEBUG:
+            st.caption("Payload agregado enviado al módulo IA")
+            st.code(
+                ai_advisor.payload_debug_json(
+                    contexto,
+                    analisis,
+                    analisis_ventas=analisis_ventas,
+                    analisis_stock=analisis_stock,
+                ),
+                language="json",
+            )
+
+        recomendaciones = ai_advisor.generar_recomendaciones_ia(
+            contexto,
+            analisis,
+            analisis_ventas=analisis_ventas,
+            analisis_stock=analisis_stock,
+        )
+        st.session_state["recomendaciones_ia"] = recomendaciones
+
+    recomendaciones = st.session_state.get("recomendaciones_ia")
+    if not recomendaciones:
+        return
+
+    st.subheader("Resumen ejecutivo")
+    st.info(recomendaciones.get("resumen_ejecutivo", "Sin resumen disponible."))
+
+    col1, col2 = st.columns(2)
+    with col1:
+        _mostrar_lista_recomendaciones("Oportunidades", recomendaciones.get("oportunidades"))
+        _mostrar_lista_recomendaciones("Recomendaciones de pedido", recomendaciones.get("recomendaciones_pedido"))
+    with col2:
+        _mostrar_lista_recomendaciones("Riesgos detectados", recomendaciones.get("riesgos_detectados"))
+        _mostrar_lista_recomendaciones("Acciones prioritarias", recomendaciones.get("acciones_prioritarias"))
+
+    _mostrar_lista_recomendaciones("Recomendaciones de negociación", recomendaciones.get("recomendaciones_negociacion"))
+    _mostrar_lista_recomendaciones("Advertencias", recomendaciones.get("advertencias"))
 
 
 def _serie_numerica(df, columna):
@@ -1170,6 +1251,7 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get(proveedor_id)
     if analisis_guardado:
         _mostrar_analisis_distribuidora(analisis_guardado)
+        render_recomendaciones_ia()
 
 
 def render_facturas_laboratorios():
@@ -1450,6 +1532,8 @@ def render_resumen():
             st.dataframe(distribuidoras)
     else:
         st.info("Genera primero los análisis individuales.")
+
+    render_recomendaciones_ia()
 
 
 def render_vida_pharma():
@@ -2256,6 +2340,7 @@ def render_vida_pharma():
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
     if analisis_guardado:
         _mostrar_analisis_distribuidora(analisis_guardado)
+        render_recomendaciones_ia()
 
 
 def render_contexto_farmacia():
