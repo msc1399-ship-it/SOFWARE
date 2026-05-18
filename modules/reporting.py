@@ -1,5 +1,7 @@
 import pandas as pd
 
+from modules import faceta
+
 
 def _df_seguro(df):
     if df is None:
@@ -33,6 +35,42 @@ def _descuento_pct(bruto, coste):
     if bruto is None or abs(float(bruto)) <= 0.0001:
         return None
     return round((1 - (float(coste) / float(bruto))) * 100, 2)
+
+
+def _df_sin_lineas_faceta(df):
+    df = _df_seguro(df)
+    if df.empty or "tipo" not in df.columns:
+        return df
+
+    descripcion = df.get("descripcion", pd.Series("", index=df.index))
+    mask_faceta = pd.Series(
+        [
+            faceta.es_linea_faceta(tipo, desc)
+            for tipo, desc in zip(df["tipo"], descripcion)
+        ],
+        index=df.index,
+    )
+    return df[~mask_faceta].copy()
+
+
+def _cargo_faceta(analisis_faceta, bloque):
+    if not analisis_faceta:
+        return 0.0
+
+    detalle = _df_seguro(analisis_faceta.get("detalle_tramo_fijo"))
+    if detalle.empty or "cargo_faceta_tramo_fijo" not in detalle.columns:
+        return 0.0
+
+    cargos = _serie_numerica(detalle, "cargo_faceta_tramo_fijo")
+    if bloque == "goteo_puro":
+        return float(cargos.sum())
+
+    seccion = detalle.get("seccion_albaran", pd.Series("", index=detalle.index)).astype(str).str.lower().str.strip()
+    if bloque == "especialidad":
+        return float(cargos[seccion.eq("especialidad")].sum())
+    if bloque == "parafarmacia":
+        return float(cargos[seccion.eq("parafarmacia")].sum())
+    return 0.0
 
 
 def _periodo(df):
@@ -108,8 +146,8 @@ def calcular_resumen_compras(df):
     }
 
 
-def calcular_desglose_por_tipo(df):
-    df = _df_seguro(df)
+def calcular_desglose_por_tipo(df, analisis_faceta=None):
+    df = _df_sin_lineas_faceta(df)
     if df.empty:
         return pd.DataFrame()
 
@@ -159,15 +197,18 @@ def calcular_desglose_por_tipo(df):
             continue
         bruto = float(parte["bruto_num"].sum())
         neto = float(parte["neto_num"].sum())
+        cargos_imputados = _cargo_faceta(analisis_faceta, bloque)
+        coste_real = neto + cargos_imputados
         filas.append({
             "bloque": bloque,
             "lineas": len(parte),
             "unidades": round(float(parte["unidades_num"].sum()), 2),
             "bruto": round(bruto, 2),
             "neto": round(neto, 2),
+            "coste_ajustado": round(coste_real, 2),
             "descuento_aparente_pct": _descuento_pct(bruto, neto),
-            "cargos_imputados": 0.0,
-            "descuento_real_final_pct": _descuento_pct(bruto, neto),
+            "cargos_imputados": round(cargos_imputados, 2),
+            "descuento_real_final_pct": _descuento_pct(bruto, coste_real),
         })
 
     return pd.DataFrame(filas)
@@ -333,7 +374,7 @@ def generar_analisis_distribuidora(
         "tipo": "distribuidora",
         "proveedor": proveedor_detectado or "distribuidora",
         "resumen": calcular_resumen_compras(df),
-        "desglose": calcular_desglose_por_tipo(df),
+        "desglose": calcular_desglose_por_tipo(df, analisis_faceta=analisis_faceta),
         "cargos": calcular_resumen_cargos(
             resultado_factura_normal=resultado_factura_normal,
             resultado_factura_transfer=resultado_factura_transfer,
