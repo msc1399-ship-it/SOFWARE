@@ -19,6 +19,7 @@ import modules.ventas as ventas
 import modules.reporting as reporting
 import modules.equivalencias_efg as equivalencias_efg
 import modules.ai_advisor as ai_advisor
+import modules.club_analysis as club_analysis
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -31,6 +32,7 @@ ventas = importlib.reload(ventas)
 reporting = importlib.reload(reporting)
 equivalencias_efg = importlib.reload(equivalencias_efg)
 ai_advisor = importlib.reload(ai_advisor)
+club_analysis = importlib.reload(club_analysis)
 
 try:
     DEBUG_PASSWORD = st.secrets.get("DEBUG_PASSWORD", "")
@@ -500,6 +502,39 @@ def _guardar_analisis_distribuidora(proveedor_id, analisis):
     st.session_state["analisis_distribuidora"] = analisis_actuales
 
 
+def _mostrar_analisis_clubes(analisis_clubes):
+    if not analisis_clubes or not analisis_clubes.get("ok"):
+        mensaje = (analisis_clubes or {}).get("mensaje")
+        if mensaje:
+            st.info(mensaje)
+        return
+
+    st.subheader("Análisis de clubes y escalados")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Compra total club", f"{analisis_clubes.get('compra_total_club', 0):.2f} €")
+    c2.metric("Compra sin liquidación", f"{analisis_clubes.get('compra_sin_liquidacion', 0):.2f} €")
+    c3.metric("% sin liquidación", f"{analisis_clubes.get('pct_club_sin_liquidacion', 0):.2f}%")
+    c4.metric("Pérdida estimada vs goteo", f"{analisis_clubes.get('perdida_vs_descuento_habitual', 0):.2f} €")
+
+    for alerta in analisis_clubes.get("alertas", []):
+        st.warning(alerta)
+
+    oportunidades = analisis_clubes.get("oportunidades_siguiente_tramo", pd.DataFrame())
+    if oportunidades is not None and not oportunidades.empty:
+        st.caption("Oportunidades cercanas a siguiente tramo")
+        st.dataframe(oportunidades)
+
+    escalados = analisis_clubes.get("escalados", pd.DataFrame())
+    if MODO_DEBUG and escalados is not None and not escalados.empty:
+        st.caption("Detalle técnico de escalados")
+        st.dataframe(escalados)
+
+    detalle = analisis_clubes.get("detalle_club", pd.DataFrame())
+    if MODO_DEBUG and detalle is not None and not detalle.empty:
+        st.caption("Detalle técnico de líneas club")
+        st.dataframe(detalle)
+
+
 def _mostrar_analisis_distribuidora(analisis):
     if not analisis or not analisis.get("ok"):
         st.warning((analisis or {}).get("mensaje", "No hay análisis disponible."))
@@ -534,12 +569,60 @@ def _mostrar_analisis_distribuidora(analisis):
         st.caption("Especialidad cara / RDL 4/2010")
         st.dataframe(especialidad_cara)
 
+    _mostrar_analisis_clubes(analisis.get("clubes"))
+
     top_impacto = analisis.get("top_impacto", pd.DataFrame())
     if top_impacto is not None and not top_impacto.empty:
         st.caption("Top impacto coste aparente vs coste real")
         st.dataframe(top_impacto)
     else:
         st.info("Top impacto pendiente: no hay costes imputados suficientes para calcular diferencias.")
+
+
+def _descuento_goteo_real_desde_resumen(resumen_bidafarma=None, analisis_distribuidora=None):
+    if resumen_bidafarma:
+        descuento = (resumen_bidafarma.get("metricas") or {}).get("goteo_puro_descuento_real")
+        if descuento is not None:
+            return descuento
+
+    desglose = (analisis_distribuidora or {}).get("desglose", pd.DataFrame())
+    if desglose is not None and not desglose.empty and "bloque" in desglose.columns:
+        fila = desglose[desglose["bloque"].astype(str).str.lower().eq("goteo_puro")]
+        if not fila.empty and "descuento_real_final_pct" in fila.columns:
+            return fila["descuento_real_final_pct"].iloc[0]
+    return None
+
+
+def _render_bloque_clubes(proveedor_id, df, descuento_goteo_real=None):
+    df_club = club_analysis.detectar_compras_club(df)
+    if df_club.empty:
+        return None
+
+    st.subheader("Análisis de clubes y escalados")
+    st.caption("Se han detectado líneas de club o selección genéricos.")
+    documento_clubes = st.file_uploader(
+        "Sube documento de clubes / selección genéricos",
+        type=["xlsx"],
+        key=f"{proveedor_id}_clubes_escalados",
+    )
+
+    df_documento = None
+    if documento_clubes:
+        if _validar_archivo_subido(documento_clubes, "Documento de clubes / selección genéricos"):
+            try:
+                df_documento = load_excel(documento_clubes)
+            except Exception as error:
+                _mostrar_error_procesamiento("No se pudo leer el documento de clubes / selección genéricos.", error)
+
+    analisis_clubes = club_analysis.analizar_clubes(
+        df,
+        df_escalados=df_documento,
+        df_liquidaciones=df_documento,
+        proveedor=proveedor_id,
+        descuento_goteo_real=descuento_goteo_real,
+    )
+    _mostrar_analisis_clubes(analisis_clubes)
+    return analisis_clubes
 
 
 def _obtener_analisis_distribuidora_principal():
@@ -1281,11 +1364,25 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
         return
 
     st.header("3️⃣ Análisis")
+    analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get(proveedor_id)
+    descuento_goteo_real = _descuento_goteo_real_desde_resumen(analisis_distribuidora=analisis_guardado)
+    analisis_clubes = _render_bloque_clubes(proveedor_id, df, descuento_goteo_real=descuento_goteo_real)
+
     if st.button("Generar análisis distribuidora", key=f"generar_analisis_{proveedor_id}"):
         analisis = reporting.generar_analisis_distribuidora(
             df,
             proveedor=proveedor_id,
+            analisis_clubes=analisis_clubes,
         )
+        if analisis_clubes and analisis_clubes.get("ok") and descuento_goteo_real is None:
+            descuento_calculado = _descuento_goteo_real_desde_resumen(analisis_distribuidora=analisis)
+            analisis["clubes"] = club_analysis.analizar_clubes(
+                df,
+                df_escalados=analisis_clubes.get("escalados"),
+                df_liquidaciones=analisis_clubes.get("escalados"),
+                proveedor=proveedor_id,
+                descuento_goteo_real=descuento_calculado,
+            )
         _guardar_analisis_distribuidora(proveedor_id, analisis)
 
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get(proveedor_id)
@@ -2387,6 +2484,13 @@ def render_vida_pharma():
             st.dataframe(resumen_final["tabla"])
 
     st.header("Generación de informe")
+    analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
+    descuento_goteo_real = _descuento_goteo_real_desde_resumen(
+        resumen_bidafarma=resumen_final,
+        analisis_distribuidora=analisis_guardado,
+    )
+    analisis_clubes = _render_bloque_clubes("bidafarma", df, descuento_goteo_real=descuento_goteo_real)
+
     if st.button("Generar análisis distribuidora", key="generar_analisis_bidafarma"):
         analisis = reporting.generar_analisis_distribuidora(
             df,
@@ -2397,7 +2501,17 @@ def render_vida_pharma():
             analisis_avantia=analisis_avantia,
             resumen_bitransfer=resumen_conciliacion_bitransfer,
             analisis_transfer=analisis_transfer,
+            analisis_clubes=analisis_clubes,
         )
+        if analisis_clubes and analisis_clubes.get("ok") and descuento_goteo_real is None:
+            descuento_calculado = _descuento_goteo_real_desde_resumen(analisis_distribuidora=analisis)
+            analisis["clubes"] = club_analysis.analizar_clubes(
+                df,
+                df_escalados=analisis_clubes.get("escalados"),
+                df_liquidaciones=analisis_clubes.get("escalados"),
+                proveedor="bidafarma",
+                descuento_goteo_real=descuento_calculado,
+            )
         _guardar_analisis_distribuidora("bidafarma", analisis)
 
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")

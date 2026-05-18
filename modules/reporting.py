@@ -356,6 +356,7 @@ def generar_analisis_distribuidora(
     analisis_avantia=None,
     resumen_bitransfer=None,
     analisis_transfer=None,
+    analisis_clubes=None,
 ):
     df = _df_seguro(df_compras)
     if df.empty:
@@ -384,6 +385,7 @@ def generar_analisis_distribuidora(
             analisis_transfer=analisis_transfer,
         ),
         "especialidad_cara": calcular_resumen_especialidad_cara(df),
+        "clubes": analisis_clubes,
         "top_impacto": calcular_top_impacto(df),
     }
 
