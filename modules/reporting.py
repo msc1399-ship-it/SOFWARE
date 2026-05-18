@@ -1,5 +1,6 @@
 import pandas as pd
 
+from modules import distributor_analysis
 from modules import faceta
 
 
@@ -358,36 +359,17 @@ def generar_analisis_distribuidora(
     analisis_transfer=None,
     analisis_clubes=None,
 ):
-    df = _df_seguro(df_compras)
-    if df.empty:
-        return {
-            "ok": False,
-            "mensaje": "No hay datos de compras suficientes para generar el análisis.",
-        }
-
-    proveedor_detectado = proveedor
-    if not proveedor_detectado and "proveedor" in df.columns:
-        proveedores = df["proveedor"].dropna().astype(str).unique().tolist()
-        proveedor_detectado = ", ".join(proveedores[:3]) if proveedores else None
-
-    return {
-        "ok": True,
-        "tipo": "distribuidora",
-        "proveedor": proveedor_detectado or "distribuidora",
-        "resumen": calcular_resumen_compras(df),
-        "desglose": calcular_desglose_por_tipo(df, analisis_faceta=analisis_faceta),
-        "cargos": calcular_resumen_cargos(
-            resultado_factura_normal=resultado_factura_normal,
-            resultado_factura_transfer=resultado_factura_transfer,
-            analisis_faceta=analisis_faceta,
-            analisis_avantia=analisis_avantia,
-            resumen_bitransfer=resumen_bitransfer,
-            analisis_transfer=analisis_transfer,
-        ),
-        "especialidad_cara": calcular_resumen_especialidad_cara(df),
-        "clubes": analisis_clubes,
-        "top_impacto": calcular_top_impacto(df),
-    }
+    return distributor_analysis.generar_analisis_distribuidora(
+        df_compras,
+        resultado_factura_normal=resultado_factura_normal,
+        resultado_factura_transfer=resultado_factura_transfer,
+        proveedor=proveedor,
+        analisis_faceta=analisis_faceta,
+        analisis_avantia=analisis_avantia,
+        resumen_bitransfer=resumen_bitransfer,
+        analisis_transfer=analisis_transfer,
+        analisis_clubes=analisis_clubes,
+    )
 
 
 def generar_resumen_final(

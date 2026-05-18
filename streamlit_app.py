@@ -20,6 +20,7 @@ import modules.reporting as reporting
 import modules.equivalencias_efg as equivalencias_efg
 import modules.ai_advisor as ai_advisor
 import modules.club_analysis as club_analysis
+import modules.distributor_analysis as distributor_analysis
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -33,6 +34,7 @@ reporting = importlib.reload(reporting)
 equivalencias_efg = importlib.reload(equivalencias_efg)
 ai_advisor = importlib.reload(ai_advisor)
 club_analysis = importlib.reload(club_analysis)
+distributor_analysis = importlib.reload(distributor_analysis)
 
 try:
     DEBUG_PASSWORD = st.secrets.get("DEBUG_PASSWORD", "")
@@ -546,28 +548,46 @@ def _mostrar_analisis_distribuidora(analisis):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Compra bruta", f"{resumen.get('compra_bruta_total', 0):.2f} €")
     c2.metric("Compra neta", f"{resumen.get('compra_neta_total', 0):.2f} €")
-    c3.metric("Abonos", f"{resumen.get('abonos_totales', 0):.2f} €")
+    gastos_resumen = analisis.get("gastos_resumen", {})
+    c3.metric("Gastos totales", f"{gastos_resumen.get('total_gastos', 0):.2f} €")
     descuento = resumen.get("descuento_medio_general")
     c4.metric("Desc. medio", "-" if descuento is None else f"{descuento:.2f}%")
+
+    g1, g2, g3, g4 = st.columns(4)
+    volumen = analisis.get("volumen_compra", {})
+    g1.metric("Compra mensual", "-" if volumen.get("compra_total_mensual") is None else f"{volumen.get('compra_total_mensual'):.2f} €")
+    g2.metric("% gastos/compra", f"{gastos_resumen.get('pct_gastos_sobre_compra', 0):.2f}%")
+    descuentos = analisis.get("descuentos_reales", {})
+    g3.metric("Goteo aparente", "-" if descuentos.get("goteo_aparente_pct") is None else f"{descuentos.get('goteo_aparente_pct'):.2f}%")
+    g4.metric("Goteo real", "-" if descuentos.get("goteo_real_pct") is None else f"{descuentos.get('goteo_real_pct'):.2f}%")
 
     periodo = resumen.get("periodo")
     if periodo:
         st.caption(f"Periodo analizado: {periodo.get('desde')} a {periodo.get('hasta')}")
 
-    desglose = analisis.get("desglose", pd.DataFrame())
+    perdida_puntos = descuentos.get("perdida_puntos_goteo")
+    if perdida_puntos is not None and perdida_puntos > 0:
+        st.info(f"El goteo pierde {perdida_puntos:.2f} puntos tras cargos frente al descuento aparente.")
+
+    desglose = analisis.get("desglose_por_tipo", analisis.get("desglose", pd.DataFrame()))
     if desglose is not None and not desglose.empty:
         st.caption("Desglose por tipo de compra")
         st.dataframe(desglose)
 
-    cargos = analisis.get("cargos", pd.DataFrame())
+    cargos = analisis.get("gastos_ocultos", analisis.get("cargos", pd.DataFrame()))
     if cargos is not None and not cargos.empty:
-        st.caption("Cargos detectados")
+        st.caption("Gastos y costes ocultos")
         st.dataframe(cargos)
 
     especialidad_cara = analisis.get("especialidad_cara", pd.DataFrame())
     if especialidad_cara is not None and not especialidad_cara.empty:
         st.caption("Especialidad cara / RDL 4/2010")
         st.dataframe(especialidad_cara)
+
+    operativa = analisis.get("operativa_proveedor", {})
+    if operativa:
+        st.caption("Operativa proveedor")
+        st.dataframe(pd.DataFrame([operativa]))
 
     _mostrar_analisis_clubes(analisis.get("clubes"))
 
@@ -576,7 +596,14 @@ def _mostrar_analisis_distribuidora(analisis):
         st.caption("Top impacto coste aparente vs coste real")
         st.dataframe(top_impacto)
     else:
-        st.info("Top impacto pendiente: no hay costes imputados suficientes para calcular diferencias.")
+        st.info(analisis.get("top_impacto_mensaje") or "Top impacto pendiente: no hay costes imputados suficientes para calcular diferencias.")
+
+    diagnostico = analisis.get("diagnostico", {})
+    if diagnostico:
+        for alerta in diagnostico.get("alertas", []):
+            st.warning(alerta)
+        for oportunidad in diagnostico.get("oportunidades", []):
+            st.info(oportunidad)
 
 
 def _descuento_goteo_real_desde_resumen(resumen_bidafarma=None, analisis_distribuidora=None):
@@ -1369,7 +1396,7 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
     analisis_clubes = _render_bloque_clubes(proveedor_id, df, descuento_goteo_real=descuento_goteo_real)
 
     if st.button("Generar análisis distribuidora", key=f"generar_analisis_{proveedor_id}"):
-        analisis = reporting.generar_analisis_distribuidora(
+        analisis = distributor_analysis.generar_analisis_distribuidora(
             df,
             proveedor=proveedor_id,
             analisis_clubes=analisis_clubes,
@@ -2492,7 +2519,7 @@ def render_vida_pharma():
     analisis_clubes = _render_bloque_clubes("bidafarma", df, descuento_goteo_real=descuento_goteo_real)
 
     if st.button("Generar análisis distribuidora", key="generar_analisis_bidafarma"):
-        analisis = reporting.generar_analisis_distribuidora(
+        analisis = distributor_analysis.generar_analisis_distribuidora(
             df,
             proveedor="bidafarma",
             resultado_factura_normal=resultado_factura_normal,
