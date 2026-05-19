@@ -395,6 +395,7 @@ def calcular_especialidad_cara(df):
         "unidades": round(unidades, 2),
         "descuento_total_euros": round(descuento_euros, 2),
         "descuento_medio_euros": round(descuento_euros / unidades, 2) if unidades else 0.0,
+        "descuento_medio_linea_euros": round(descuento_euros / len(caras), 2) if len(caras) else 0.0,
         "base_iva4_total": round(base_iva4_total, 2),
         "base_iva4_especialidad_cara": round(base_iva4_cara, 2),
         "base_iva4_sujeta_ajuste": round(base_iva4_total - base_iva4_cara, 2),

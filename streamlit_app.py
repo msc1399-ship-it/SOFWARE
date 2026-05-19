@@ -402,8 +402,6 @@ def _mostrar_vistas_albaranes(df):
         titulo = "📦 Goteo" if tipo == "goteo" else "🚚 Transfer"
         st.header(f"{titulo}")
 
-        _mostrar_dataframe_completo(df_tipo)
-
         if "tipo" in df_tipo.columns:
             mask_faceta = df_tipo.apply(
                 lambda row: faceta.es_linea_faceta(row.get("tipo"), row.get("descripcion")),
@@ -433,57 +431,9 @@ def _mostrar_vistas_albaranes(df):
         c5.metric("Desc %", round(descuento, 2))
         c6.metric("Abonos", f"{abs(total_abonos):.1f} €")
 
-        _mostrar_resumen_especialidad_cara(compras)
-
-
-def _mostrar_resumen_especialidad_cara(df):
-    if df is None or df.empty or "es_especialidad_cara" not in df.columns:
-        return
-
-    especialidad_cara = df[df["es_especialidad_cara"]].copy()
-    if especialidad_cara.empty:
-        return
-
-    for columna in ["bruto", "neto", "descuento_especialidad_cara_euros"]:
-        if columna in especialidad_cara.columns:
-            especialidad_cara[columna] = pd.to_numeric(especialidad_cara[columna], errors="coerce").fillna(0.0)
-        else:
-            especialidad_cara[columna] = 0.0
-
-    lineas = len(especialidad_cara)
-    bruto_total = especialidad_cara["bruto"].sum()
-    neto_total = especialidad_cara["neto"].sum()
-    descuento_total = especialidad_cara["descuento_especialidad_cara_euros"].sum()
-    descuento_medio = descuento_total / lineas if lineas else 0.0
-
-    st.subheader("Especialidad cara / RDL 4/2010")
-    ec1, ec2, ec3, ec4, ec5 = st.columns(5)
-    ec1.metric("Líneas", lineas)
-    ec2.metric("Bruto", f"{bruto_total:.2f} €")
-    ec3.metric("Neto", f"{neto_total:.2f} €")
-    ec4.metric("Descuento €", f"{descuento_total:.2f} €")
-    ec5.metric("Desc. medio/línea", f"{descuento_medio:.2f} €")
-
-    columnas_debug = [
-        "cn",
-        "descripcion",
-        "proveedor",
-        "tipo_compra",
-        "iva",
-        "unidades",
-        "bruto",
-        "neto",
-        "bruto_unitario",
-        "neto_unitario",
-        "tipo_especialidad_cara",
-        "descuento_especialidad_cara_euros",
-        "base_iva4_total",
-        "base_iva4_especialidad_cara",
-        "base_iva4_sujeta_ajuste",
-    ]
-    columnas_debug = [col for col in columnas_debug if col in especialidad_cara.columns]
-    st.caption("Líneas detectadas como especialidad cara")
-    st.dataframe(especialidad_cara[columnas_debug])
+        etiqueta = "Ver detalle compras goteo" if tipo == "goteo" else "Ver detalle compras transfer"
+        with st.expander(etiqueta, expanded=False):
+            _mostrar_dataframe_completo(df_tipo)
 
 
 def _guardar_analisis_distribuidora(proveedor_id, analisis):
@@ -569,10 +519,24 @@ def _mostrar_analisis_distribuidora(analisis):
         st.caption("Gastos y costes ocultos")
         st.dataframe(cargos)
 
-    especialidad_cara = analisis.get("especialidad_cara", pd.DataFrame())
-    if especialidad_cara is not None and not especialidad_cara.empty:
-        st.caption("Especialidad cara / RDL 4/2010")
-        st.dataframe(especialidad_cara)
+    especialidad_cara_resumen = analisis.get("especialidad_cara_resumen", {})
+    if especialidad_cara_resumen and especialidad_cara_resumen.get("lineas_detectadas", 0) > 0:
+        st.subheader("Especialidad cara / RDL 4/2010")
+        ec1, ec2, ec3, ec4 = st.columns(4)
+        ec1.metric("Líneas", especialidad_cara_resumen.get("lineas_detectadas", 0))
+        ec2.metric("Unidades", f"{especialidad_cara_resumen.get('unidades', 0):.2f}")
+        ec3.metric("Bruto total", f"{especialidad_cara_resumen.get('bruto_total', 0):.2f} €")
+        ec4.metric("Neto total", f"{especialidad_cara_resumen.get('neto_total', 0):.2f} €")
+        ec5, ec6, ec7, ec8 = st.columns(4)
+        ec5.metric("Descuento total", f"{especialidad_cara_resumen.get('descuento_total_euros', 0):.2f} €")
+        ec6.metric("Desc. medio/línea", f"{especialidad_cara_resumen.get('descuento_medio_linea_euros', 0):.2f} €")
+        ec7.metric("Base IVA4 total", f"{especialidad_cara_resumen.get('base_iva4_total', 0):.2f} €")
+        ec8.metric("Base sujeta ajuste", f"{especialidad_cara_resumen.get('base_iva4_sujeta_ajuste', 0):.2f} €")
+        st.dataframe(pd.DataFrame([{
+            "base_iva4_total": especialidad_cara_resumen.get("base_iva4_total", 0),
+            "base_iva4_especialidad_cara": especialidad_cara_resumen.get("base_iva4_especialidad_cara", 0),
+            "base_iva4_sujeta_ajuste": especialidad_cara_resumen.get("base_iva4_sujeta_ajuste", 0),
+        }]))
 
     operativa = analisis.get("operativa_proveedor", {})
     if operativa:
