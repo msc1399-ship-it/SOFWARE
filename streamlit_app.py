@@ -1977,9 +1977,13 @@ def render_vida_pharma():
                             a5.metric("Cuota Avantia", f"{resumen_avantia['cuota_avantia']:.2f} €")
                             a6.metric("Coste total", f"{resumen_avantia['coste_total_avantia']:.2f} €")
 
-                            if not analisis_avantia["cargos"].empty:
-                                st.caption("Cargos detectados en cuadro rentabilidad Avantia")
-                                st.dataframe(analisis_avantia["cargos"])
+                            cargos_calculados_avantia = analisis_avantia.get(
+                                "cargos_calculados",
+                                pd.DataFrame(),
+                            )
+                            if not cargos_calculados_avantia.empty:
+                                st.caption("Cargos calculados Avantia")
+                                st.dataframe(cargos_calculados_avantia)
 
                             if not analisis_avantia["detalle"].empty:
                                 st.caption("Resumen detallado de artículos Avantia")

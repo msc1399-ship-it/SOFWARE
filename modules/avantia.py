@@ -348,6 +348,30 @@ def _calcular_pct_efectivo(importe, base):
     return round((importe / base) * 100, 4)
 
 
+def _crear_resumen_cargos_calculados(
+    pct_especialidad,
+    pct_parafarmacia,
+    cargo_especialidad,
+    cargo_parafarmacia,
+    df_cargos=None,
+):
+    filas = []
+    for categoria, pct_aplicado, cargo_calculado in [
+        ("especialidad", pct_especialidad, cargo_especialidad),
+        ("parafarmacia", pct_parafarmacia, cargo_parafarmacia),
+    ]:
+        bonificacion = _bonificacion_categoria(df_cargos, categoria)
+        filas.append({
+            "categoria": categoria,
+            "tipo": "goteo",
+            "cargo_pct_aplicado": round(float(pct_aplicado or 0.0), 4),
+            "cargo_calculado": round(float(cargo_calculado or 0.0), 2),
+            "bonificacion_gasto": round(float(bonificacion or 0.0), 2),
+            "gasto_neto": round(float(cargo_calculado or 0.0) - float(bonificacion or 0.0), 2),
+        })
+    return pd.DataFrame(filas)
+
+
 def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
     if not hay_avantia(df_compras, gastos_factura):
         return None
@@ -364,6 +388,7 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
         return {
             "detalle": pd.DataFrame(),
             "cargos": df_cargos if df_cargos is not None else pd.DataFrame(),
+            "cargos_calculados": _crear_resumen_cargos_calculados(0.0, 0.0, 0.0, 0.0, df_cargos),
             "resumen": {
                 "cuota_avantia": _importe_gasto(gastos_factura, "avantia"),
                 "gasto_gestion": _importe_gasto(gastos_factura, "gestion"),
@@ -472,5 +497,12 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
     return {
         "detalle": detalle,
         "cargos": df_cargos if df_cargos is not None else pd.DataFrame(),
+        "cargos_calculados": _crear_resumen_cargos_calculados(
+            pct_especialidad,
+            pct_parafarmacia,
+            cargo_especialidad,
+            cargo_parafarmacia,
+            df_cargos,
+        ),
         "resumen": resumen,
     }
