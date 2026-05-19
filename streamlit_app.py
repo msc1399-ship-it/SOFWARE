@@ -1741,8 +1741,11 @@ def render_vida_pharma():
     analisis_avantia = None
     analisis_ajuste = None
     analisis_cargo_adicional = None
+    analisis_clubes = None
+    analisis_faceta_final = None
     resumen_conciliacion_bitransfer = None
     resumen_consumos_bitransfer = None
+    resumen_final = None
     condicion_detectada = None
     resultado_factura_normal = None
     resultado_factura_transfer = None
@@ -2240,6 +2243,23 @@ def render_vida_pharma():
                             f"Líneas afectadas: {resumen_cargo_adicional['lineas_afectadas']}"
                         )
 
+            analisis_faceta_final = faceta.analizar_faceta_v(df, df_faceta_bidafarma) if not df_faceta_bidafarma.empty else None
+            resumen_final = _resumen_bidafarma(
+                df,
+                analisis_faceta=analisis_faceta_final,
+                resumen_bitransfer=resumen_conciliacion_bitransfer,
+                analisis_avantia=analisis_avantia,
+                analisis_ajuste=analisis_ajuste,
+                analisis_cargo_adicional=analisis_cargo_adicional,
+                analisis_transfer=None,
+            )
+            analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
+            descuento_goteo_real = _descuento_goteo_real_desde_resumen(
+                resumen_bidafarma=resumen_final,
+                analisis_distribuidora=analisis_guardado,
+            )
+            analisis_clubes = _render_bloque_clubes("bidafarma", df, descuento_goteo_real=descuento_goteo_real)
+
         # -------------------------
         # FACTURA TRANSFER
         # -------------------------
@@ -2366,7 +2386,6 @@ def render_vida_pharma():
         st.warning("Sube archivos")
         return
 
-    st.header("📌 Resumen Bidafarma")
     analisis_faceta_final = faceta.analizar_faceta_v(df, df_faceta_bidafarma) if not df_faceta_bidafarma.empty else None
     resumen_final = _resumen_bidafarma(
         df,
@@ -2378,38 +2397,18 @@ def render_vida_pharma():
         analisis_transfer=analisis_transfer,
     )
 
-    if resumen_final:
-        metricas = resumen_final["metricas"]
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Compra total Bidafarma", f"{metricas['total_bidafarma_bruto']:.2f} €")
-        r2.metric(
-            "Desc. real goteo puro",
-            "-" if metricas["goteo_puro_descuento_real"] is None else f"{metricas['goteo_puro_descuento_real']:.2f}%",
-        )
-        r3.metric(
-            "Desc. real Bitransfer",
-            "-" if metricas["bitransfer_descuento_real"] is None else f"{metricas['bitransfer_descuento_real']:.2f}%",
-        )
-        r4.metric(
-            "Desc. real Transfer",
-            "-" if metricas["transfer_descuento_real"] is None else f"{metricas['transfer_descuento_real']:.2f}%",
-        )
-
-        if resumen_final["resumen_textual"]:
-            for texto in resumen_final["resumen_textual"]:
-                st.info(texto)
-
-        if not resumen_final["tabla"].empty:
-            st.caption("Resumen de compras y descuentos reales por bloque")
-            st.dataframe(resumen_final["tabla"])
-
     st.header("Generación de informe")
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
     descuento_goteo_real = _descuento_goteo_real_desde_resumen(
         resumen_bidafarma=resumen_final,
         analisis_distribuidora=analisis_guardado,
     )
-    analisis_clubes = _render_bloque_clubes("bidafarma", df, descuento_goteo_real=descuento_goteo_real)
+    if analisis_clubes is None:
+        analisis_clubes = club_analysis.analizar_clubes(
+            df,
+            proveedor="bidafarma",
+            descuento_goteo_real=descuento_goteo_real,
+        )
 
     if st.button("Generar análisis distribuidora", key="generar_analisis_bidafarma"):
         analisis = distributor_analysis.generar_analisis_distribuidora(
