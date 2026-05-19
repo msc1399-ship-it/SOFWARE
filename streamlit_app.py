@@ -1279,7 +1279,7 @@ def _resumen_bidafarma(
     bloque_avantia = agregar_bloque(
         "Avantia",
         mask_avantia,
-        coste_extra=0.0 if not analisis_avantia else float(analisis_avantia["resumen"]["coste_total_avantia"] - analisis_avantia["resumen"]["cuota_avantia"] - lineas_resumen[mask_avantia]["neto"].sum()),
+        coste_extra=0.0 if not analisis_avantia else float(analisis_avantia["resumen"]["coste_total_avantia"]),
     )
 
     total_bidafarma_bruto = float(lineas_resumen["bruto"].sum())

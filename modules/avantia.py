@@ -4,7 +4,6 @@ import unicodedata
 import pandas as pd
 
 
-INCREMENTO_PVA_SOBRE_PBL = 1.076
 CARGO_AVANTIA_SIN_BONIFICACION = 2.0
 
 
@@ -296,7 +295,7 @@ def leer_cuadro_rentabilidad_avantia(file):
 
 
 def _cargo_categoria(df_cargos, categoria, defecto=2.0):
-    if df_cargos is None or df_cargos.empty:
+    if df_cargos is None or df_cargos.empty or "cargo_pct" not in df_cargos.columns:
         return defecto
 
     fila = df_cargos[df_cargos["categoria"] == categoria]
@@ -391,79 +390,16 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
     df_avantia["categoria_avantia"] = df_avantia["iva"].apply(
         lambda iva: "especialidad" if iva == 4 else "parafarmacia" if iva in [10, 21] else "sin_categoria"
     )
-    df_avantia["base_cargo_avantia"] = df_avantia["bruto"].abs() * INCREMENTO_PVA_SOBRE_PBL
+    pct_especialidad = _cargo_categoria(df_cargos, "especialidad", CARGO_AVANTIA_SIN_BONIFICACION)
+    pct_parafarmacia = _cargo_categoria(df_cargos, "parafarmacia", CARGO_AVANTIA_SIN_BONIFICACION)
 
-    gasto_especialidad = _gasto_categoria(df_cargos, "especialidad")
-    gasto_parafarmacia = _gasto_categoria(df_cargos, "parafarmacia")
-
-    usa_importes_excel = gasto_especialidad is not None or gasto_parafarmacia is not None
-
-    if usa_importes_excel:
-        gasto_especialidad = gasto_especialidad or 0.0
-        gasto_parafarmacia = gasto_parafarmacia or 0.0
-        bonificacion_por_categoria = {
-            "especialidad": _tiene_bonificacion_categoria(df_cargos, "especialidad"),
-            "parafarmacia": _tiene_bonificacion_categoria(df_cargos, "parafarmacia"),
-        }
-
-        bases_por_categoria = df_avantia.groupby("categoria_avantia")["base_cargo_avantia"].sum()
-        base_especialidad = float(bases_por_categoria.get("especialidad", 0.0))
-        base_parafarmacia = float(bases_por_categoria.get("parafarmacia", 0.0))
-
-        pct_especialidad = (
-            _calcular_pct_efectivo(gasto_especialidad, base_especialidad)
-            if bonificacion_por_categoria["especialidad"]
-            else CARGO_AVANTIA_SIN_BONIFICACION
-        )
-        pct_parafarmacia = (
-            _calcular_pct_efectivo(gasto_parafarmacia, base_parafarmacia)
-            if bonificacion_por_categoria["parafarmacia"]
-            else CARGO_AVANTIA_SIN_BONIFICACION
-        )
-
-        df_avantia["cargo_pct_avantia"] = df_avantia["categoria_avantia"].map({
-            "especialidad": pct_especialidad,
-            "parafarmacia": pct_parafarmacia,
-        }).fillna(0.0)
-
-        df_avantia["cargo_avantia"] = 0.0
-        df_avantia["metodo_cargo_avantia"] = ""
-        for categoria, gasto_categoria in {
-            "especialidad": gasto_especialidad,
-            "parafarmacia": gasto_parafarmacia,
-        }.items():
-            mask = df_avantia["categoria_avantia"] == categoria
-            base_categoria = float(df_avantia.loc[mask, "base_cargo_avantia"].sum())
-
-            if not bonificacion_por_categoria[categoria]:
-                df_avantia.loc[mask, "cargo_avantia"] = (
-                    df_avantia.loc[mask, "base_cargo_avantia"] * (CARGO_AVANTIA_SIN_BONIFICACION / 100)
-                )
-                df_avantia.loc[mask, "metodo_cargo_avantia"] = "2_pct_sobre_pva_estimado"
-            elif base_categoria > 0:
-                df_avantia.loc[mask, "cargo_avantia"] = (
-                    df_avantia.loc[mask, "base_cargo_avantia"] / base_categoria
-                ) * gasto_categoria
-                df_avantia.loc[mask, "metodo_cargo_avantia"] = "prorrateo_gasto_bonificado"
-            else:
-                unidades_categoria = float(df_avantia.loc[mask, "unidades"].abs().sum())
-                if unidades_categoria > 0:
-                    df_avantia.loc[mask, "cargo_avantia"] = (
-                        df_avantia.loc[mask, "unidades"].abs() / unidades_categoria
-                    ) * gasto_categoria
-                    df_avantia.loc[mask, "metodo_cargo_avantia"] = "prorrateo_gasto_bonificado"
-    else:
-        pct_especialidad = CARGO_AVANTIA_SIN_BONIFICACION
-        pct_parafarmacia = CARGO_AVANTIA_SIN_BONIFICACION
-
-        df_avantia["cargo_pct_avantia"] = df_avantia["categoria_avantia"].map({
-            "especialidad": pct_especialidad,
-            "parafarmacia": pct_parafarmacia,
-        }).fillna(0.0)
-        df_avantia["cargo_avantia"] = (
-            df_avantia["base_cargo_avantia"] * (df_avantia["cargo_pct_avantia"] / 100)
-        )
-        df_avantia["metodo_cargo_avantia"] = "2_pct_sobre_pva_estimado"
+    df_avantia["cargo_pct_avantia"] = df_avantia["categoria_avantia"].map({
+        "especialidad": pct_especialidad,
+        "parafarmacia": pct_parafarmacia,
+    }).fillna(0.0)
+    df_avantia["cargo_avantia"] = (
+        df_avantia["bruto"].abs() * (df_avantia["cargo_pct_avantia"] / 100)
+    )
 
     cuota_avantia = _importe_gasto(gastos_factura, "avantia")
     unidades_totales = float(df_avantia["unidades"].abs().sum())
@@ -471,10 +407,8 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
         cuota_avantia / unidades_totales if unidades_totales > 0 else 0.0
     )
     df_avantia["cuota_avantia_linea"] = df_avantia["cuota_avantia_unitaria"] * df_avantia["unidades"].abs()
-    df_avantia["coste_avantia_total_linea"] = (
-        df_avantia["cargo_avantia"] + df_avantia["cuota_avantia_linea"]
-    )
-    df_avantia["neto_con_avantia"] = df_avantia["neto"] + df_avantia["coste_avantia_total_linea"]
+    df_avantia["coste_avantia"] = df_avantia["neto"] + df_avantia["cargo_avantia"]
+    df_avantia["neto_con_avantia"] = df_avantia["coste_avantia"] + df_avantia["cuota_avantia_linea"]
     df_avantia["neto_unitario_con_avantia"] = (
         df_avantia["neto_con_avantia"] / df_avantia["unidades"].abs().replace(0, 1)
     )
@@ -489,10 +423,8 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
         "neto",
         "cargo_pct_avantia",
         "cargo_avantia",
-        "base_cargo_avantia",
-        "metodo_cargo_avantia",
         "cuota_avantia_linea",
-        "coste_avantia_total_linea",
+        "coste_avantia",
         "neto_con_avantia",
         "neto_unitario_con_avantia",
     ]
@@ -503,9 +435,8 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
         "neto",
         "cargo_pct_avantia",
         "cargo_avantia",
-        "base_cargo_avantia",
         "cuota_avantia_linea",
-        "coste_avantia_total_linea",
+        "coste_avantia",
         "neto_con_avantia",
         "neto_unitario_con_avantia",
     ]

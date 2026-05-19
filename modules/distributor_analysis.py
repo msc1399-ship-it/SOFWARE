@@ -160,7 +160,7 @@ def _cargo_extra_por_bloque(
 
     if bloque == "avantia" and analisis_avantia:
         resumen = analisis_avantia.get("resumen") or {}
-        cargo += float(resumen.get("coste_total_avantia", 0) or 0) - float(resumen.get("cuota_avantia", 0) or 0)
+        cargo += float(resumen.get("coste_total_avantia", 0) or 0)
 
     return cargo
 
