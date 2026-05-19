@@ -469,6 +469,90 @@ def generar_diagnostico(volumen, descuentos, gastos_resumen, especialidad_cara, 
     }
 
 
+def calcular_condiciones_comerciales(
+    condicion_detectada=None,
+    analisis_faceta=None,
+    analisis_ajuste=None,
+    analisis_cargo_adicional=None,
+    descuentos=None,
+):
+    filas = []
+    detalles = {}
+    descuentos = descuentos or {}
+
+    def _tipo_albaran_74(valor):
+        return {
+            1: "liquidacion_club",
+            2: "margen_tramo_fijo",
+            3: "tramo_cero_ajuste_escala",
+        }.get(valor, valor)
+
+    if condicion_detectada:
+        filas.append({
+            "condicion": condicion_detectada.get("nombre"),
+            "tipo_condicion": condicion_detectada.get("acronimo"),
+            "cargo_total": 0.0,
+            "base_aplicacion": None,
+            "lineas_afectadas": None,
+            "impacto_sobre_neto": 0.0,
+            "impacto_sobre_descuento_real": None,
+            "origen": "condicion_detectada",
+        })
+
+    if analisis_faceta:
+        resumen = analisis_faceta.get("resumen") or {}
+        cargo = float(resumen.get("margen_tramo_fijo_total", 0) or 0)
+        filas.append({
+            "condicion": (condicion_detectada or {}).get("nombre"),
+            "tipo_condicion": _tipo_albaran_74(resumen.get("tipo_albaran_74")) or "margen_tramo_fijo",
+            "cargo_total": round(cargo, 2),
+            "base_aplicacion": resumen.get("base_aplicacion"),
+            "lineas_afectadas": resumen.get("lineas_tramo_fijo"),
+            "impacto_sobre_neto": round(cargo, 2),
+            "impacto_sobre_descuento_real": descuentos.get("perdida_puntos_goteo"),
+            "origen": "albaran_74",
+        })
+        detalles["detalle_tramo_fijo"] = _df_seguro(analisis_faceta.get("detalle_tramo_fijo"))
+        detalles["conceptos"] = _df_seguro(analisis_faceta.get("conceptos"))
+        detalles["resumen_liquidaciones"] = _df_seguro(analisis_faceta.get("resumen_liquidaciones"))
+        detalles["detalle_liquidaciones"] = _df_seguro(analisis_faceta.get("detalle_liquidaciones"))
+
+    if analisis_ajuste:
+        resumen = analisis_ajuste.get("resumen") or {}
+        descuento = float(resumen.get("descuento_total", 0) or 0)
+        filas.append({
+            "condicion": (condicion_detectada or {}).get("nombre"),
+            "tipo_condicion": "ajuste_comercial",
+            "cargo_total": round(-descuento, 2),
+            "base_aplicacion": resumen.get("base_aplicacion"),
+            "lineas_afectadas": resumen.get("lineas_afectadas"),
+            "impacto_sobre_neto": round(-descuento, 2),
+            "impacto_sobre_descuento_real": resumen.get("descuento_pct"),
+            "origen": "factura_normal",
+        })
+        detalles["detalle_ajuste_comercial"] = _df_seguro(analisis_ajuste.get("detalle"))
+
+    if analisis_cargo_adicional:
+        resumen = analisis_cargo_adicional.get("resumen") or {}
+        cargo = float(resumen.get("cargo_total", 0) or 0)
+        filas.append({
+            "condicion": (condicion_detectada or {}).get("nombre"),
+            "tipo_condicion": "franquicia_gestion",
+            "cargo_total": round(cargo, 2),
+            "base_aplicacion": resumen.get("base_aplicacion"),
+            "lineas_afectadas": resumen.get("lineas_afectadas"),
+            "impacto_sobre_neto": round(cargo, 2),
+            "impacto_sobre_descuento_real": None,
+            "origen": "factura_normal",
+        })
+        detalles["detalle_cargo_adicional"] = _df_seguro(analisis_cargo_adicional.get("detalle"))
+
+    return {
+        "resumen": pd.DataFrame(filas),
+        "detalles": detalles,
+    }
+
+
 def generar_analisis_distribuidora(
     df_compras,
     resultado_factura_normal=None,
@@ -479,6 +563,9 @@ def generar_analisis_distribuidora(
     resumen_bitransfer=None,
     analisis_transfer=None,
     analisis_clubes=None,
+    condicion_detectada=None,
+    analisis_ajuste=None,
+    analisis_cargo_adicional=None,
 ):
     df = _df_seguro(df_compras)
     if df.empty:
@@ -511,6 +598,13 @@ def generar_analisis_distribuidora(
     operativa = calcular_operativa_proveedor(df)
     top_impacto, mensaje_top = calcular_top_articulos_impactados(df)
     diagnostico = generar_diagnostico(volumen, descuentos, gastos_resumen, especialidad_cara, top_impacto, mensaje_top)
+    condiciones_comerciales = calcular_condiciones_comerciales(
+        condicion_detectada=condicion_detectada,
+        analisis_faceta=analisis_faceta,
+        analisis_ajuste=analisis_ajuste,
+        analisis_cargo_adicional=analisis_cargo_adicional,
+        descuentos=descuentos,
+    )
 
     resumen_compat = {
         "periodo": volumen.get("periodo"),
@@ -547,6 +641,7 @@ def generar_analisis_distribuidora(
         "top_impacto_mensaje": mensaje_top,
         "diagnostico": diagnostico,
         "clubes": analisis_clubes,
+        "condiciones_comerciales": condiciones_comerciales,
         # Claves de compatibilidad con la UI/IA/resumen final actuales.
         "resumen": resumen_compat,
         "desglose": desglose,

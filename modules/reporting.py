@@ -358,6 +358,9 @@ def generar_analisis_distribuidora(
     resumen_bitransfer=None,
     analisis_transfer=None,
     analisis_clubes=None,
+    condicion_detectada=None,
+    analisis_ajuste=None,
+    analisis_cargo_adicional=None,
 ):
     return distributor_analysis.generar_analisis_distribuidora(
         df_compras,
@@ -369,6 +372,9 @@ def generar_analisis_distribuidora(
         resumen_bitransfer=resumen_bitransfer,
         analisis_transfer=analisis_transfer,
         analisis_clubes=analisis_clubes,
+        condicion_detectada=condicion_detectada,
+        analisis_ajuste=analisis_ajuste,
+        analisis_cargo_adicional=analisis_cargo_adicional,
     )
 
 

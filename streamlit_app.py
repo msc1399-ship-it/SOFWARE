@@ -477,6 +477,50 @@ def _mostrar_analisis_clubes(analisis_clubes):
         st.dataframe(detalle)
 
 
+def _mostrar_tarjeta_condicion_comercial(condicion_detectada=None, analisis_faceta=None):
+    if not condicion_detectada and not analisis_faceta:
+        st.info("ℹ️ No se han detectado condiciones comerciales específicas en los albaranes cargados.")
+        st.caption("Puedes continuar con la subida de facturas.")
+        return
+
+    resumen_faceta = (analisis_faceta or {}).get("resumen", {})
+    tipo_74 = resumen_faceta.get("tipo_albaran_74")
+    tipo_condicion = {
+        1: "liquidación club",
+        2: "margen tramo fijo",
+        3: "tramo cero / ajuste escala",
+    }.get(tipo_74, tipo_74 or (condicion_detectada or {}).get("acronimo"))
+    cargo_total = float(resumen_faceta.get("margen_tramo_fijo_total", 0) or 0)
+    lineas_afectadas = resumen_faceta.get("lineas_tramo_fijo")
+
+    st.success("✅ Condición comercial detectada")
+    st.caption("Se ha detectado una condición aplicable en los albaranes cargados.")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Tipo", tipo_condicion or "condición aplicable")
+    c2.metric("Franquicia detectada", f"{cargo_total:.2f} €" if cargo_total else "-")
+    c3.metric("Líneas afectadas", "-" if lineas_afectadas is None else lineas_afectadas)
+    st.caption("Puedes continuar con la subida de facturas. El detalle técnico se incluirá en el informe generado.")
+
+
+def _mostrar_condiciones_en_informe(analisis):
+    condiciones = (analisis or {}).get("condiciones_comerciales") or {}
+    resumen = condiciones.get("resumen", pd.DataFrame())
+    detalles = condiciones.get("detalles", {})
+
+    if resumen is None or resumen.empty:
+        return
+
+    st.subheader("Condiciones comerciales y franquicias")
+    st.dataframe(resumen)
+
+    if detalles:
+        with st.expander("Ver detalle técnico de condiciones", expanded=False):
+            for nombre, detalle in detalles.items():
+                if detalle is not None and not detalle.empty:
+                    st.caption(nombre.replace("_", " ").title())
+                    st.dataframe(detalle)
+
+
 def _mostrar_analisis_distribuidora(analisis):
     if not analisis or not analisis.get("ok"):
         st.warning((analisis or {}).get("mensaje", "No hay análisis disponible."))
@@ -544,6 +588,8 @@ def _mostrar_analisis_distribuidora(analisis):
         st.dataframe(pd.DataFrame([operativa]))
 
     _mostrar_analisis_clubes(analisis.get("clubes"))
+
+    _mostrar_condiciones_en_informe(analisis)
 
     top_impacto = analisis.get("top_impacto", pd.DataFrame())
     if top_impacto is not None and not top_impacto.empty:
@@ -1764,85 +1810,21 @@ def render_vida_pharma():
     if df is not None:
         _mostrar_vistas_albaranes(df)
 
-    if condicion_detectada:
-        st.subheader("🧭 Condición detectada")
-        c1, c2 = st.columns(2)
-        c1.metric("Nombre", condicion_detectada["nombre"])
-        c2.metric("Acrónimo", condicion_detectada["acronimo"])
-
     if not df_faceta_bidafarma.empty:
         analisis_faceta = faceta.analizar_faceta_v(df, df_faceta_bidafarma) if df is not None else None
+    elif df is not None:
+        analisis_faceta = None
 
+    if df is not None:
+        _mostrar_tarjeta_condicion_comercial(condicion_detectada, analisis_faceta)
+
+    if not df_faceta_bidafarma.empty:
         if analisis_faceta:
             resumen_faceta = analisis_faceta["resumen"]
             hay_cargo_tarifa = abs(resumen_faceta["margen_tramo_fijo_total"]) > 0.0001
-            titulo_tarifa = "Albarán TP 74"
-            if condicion_detectada:
-                if hay_cargo_tarifa:
-                    titulo_tarifa = f"Tarifa {condicion_detectada['acronimo']} · {condicion_detectada['nombre']}"
-                else:
-                    titulo_tarifa = f"Liquidaciones · {condicion_detectada['nombre']} ({condicion_detectada['acronimo']})"
-            st.header(f"🧾 {titulo_tarifa}")
-
             if hay_cargo_tarifa:
-                f1, f2, f3, f4 = st.columns(4)
-                f1.metric("Cargo tarifa", f"{resumen_faceta['margen_tramo_fijo_total']:.2f} €")
-                f2.metric("Base tramo fijo", f"{resumen_faceta['base_tramo_fijo']:.2f} €")
-                f3.metric("Base de aplicación", f"{resumen_faceta['base_aplicacion']:.2f} €")
-                f4.metric("Liquidaciones", f"{resumen_faceta['liquidaciones_total']:.2f} €")
-                st.caption("Conceptos detectados en albaranes TP 74")
-                _mostrar_dataframe_completo(
-                    analisis_faceta["conceptos"][
-                        [col for col in ["fecha", "hora", "tp", "concepto", "importe"] if col in analisis_faceta["conceptos"].columns]
-                    ]
-                )
-
-            if hay_cargo_tarifa and not analisis_faceta["detalle_tramo_fijo"].empty:
-                st.caption("Imputación margen tramo fijo sobre goteo elegible")
-                st.dataframe(
-                    analisis_faceta["detalle_tramo_fijo"][
-                        [
-                            col for col in [
-                                "cn",
-                                "descripcion",
-                                "seccion_albaran",
-                                "unidades",
-                                "bruto",
-                                "neto",
-                                "cargo_faceta_tramo_fijo",
-                                "neto_con_faceta_tramo_fijo",
-                            ]
-                            if col in analisis_faceta["detalle_tramo_fijo"].columns
-                        ]
-                    ]
-                )
-
-            if not analisis_faceta["resumen_liquidaciones"].empty:
-                st.caption("Resumen de liquidaciones detectadas")
-                st.dataframe(analisis_faceta["resumen_liquidaciones"])
-
-            if not analisis_faceta["detalle_liquidaciones"].empty:
-                st.caption("Imputación de liquidaciones por club/laboratorio")
-                st.dataframe(
-                    analisis_faceta["detalle_liquidaciones"][
-                        [
-                            col for col in [
-                                "grupo_liquidacion",
-                                "cn",
-                                "descripcion",
-                                "unidades",
-                                "bruto",
-                                "neto",
-                                "pct_liquidacion",
-                                "liquidacion_faceta_linea",
-                                "neto_con_liquidacion",
-                            ]
-                            if col in analisis_faceta["detalle_liquidaciones"].columns
-                        ]
-                    ]
-                )
+                st.caption("La franquicia detectada se aplicará en los descuentos reales y aparecerá detallada en el informe generado.")
         else:
-            _mostrar_dataframe_completo(df_faceta_bidafarma)
             st.info("Se ha detectado un albarán TP 74, pero todavía no hay líneas de compra goteo sobre las que imputar cargos o liquidaciones.")
 
     # =========================
@@ -1896,29 +1878,11 @@ def render_vida_pharma():
 
             if analisis_ajuste:
                 resumen_ajuste = analisis_ajuste["resumen"]
-                st.subheader("📉 Ajuste comercial en factura")
-
-                ac1, ac2, ac3, ac4 = st.columns(4)
-                ac1.metric("Descuento factura", f"{resumen_ajuste['descuento_total']:.2f} €")
-                ac2.metric("Base aplicación", f"{resumen_ajuste['base_aplicacion']:.2f} €")
-                ac3.metric("Descuento %", f"{resumen_ajuste['descuento_pct']:.2f}%")
-                ac4.metric("Líneas afectadas", resumen_ajuste["lineas_afectadas"])
-
-                st.caption("Imputación del ajuste comercial sobre especialidad IVA 4 elegible")
-                st.dataframe(
-                    analisis_ajuste["detalle"][
-                        [
-                            col for col in [
-                                "cn",
-                                "descripcion",
-                                "bruto",
-                                "neto",
-                                "descuento_ajuste_comercial",
-                                "neto_con_ajuste_comercial",
-                            ]
-                            if col in analisis_ajuste["detalle"].columns
-                        ]
-                    ]
+                st.info(
+                    "Se ha detectado un ajuste comercial en factura "
+                    f"por {resumen_ajuste['descuento_total']:.2f} € "
+                    f"sobre {resumen_ajuste['lineas_afectadas']} líneas. "
+                    "El detalle se incluirá en el informe generado."
                 )
 
             analisis_servicios = servicios.analizar_gastos_servicios(df, resultado["gastos"], condicion_detectada)
@@ -2248,31 +2212,12 @@ def render_vida_pharma():
                     if analisis_cargo_adicional:
                         st.warning(
                             "Los gastos de gestión incluyen un cargo adicional no explicado por BitTransfer/Avantia. "
-                            "Se reparte como franquicia sobre el goteo elegible."
+                            "Se reparte como franquicia sobre el goteo elegible y se detallará en el informe generado."
                         )
                         resumen_cargo_adicional = analisis_cargo_adicional["resumen"]
-                        ca1, ca2, ca3, ca4 = st.columns(4)
-                        ca1.metric("Cargo adicional", f"{resumen_cargo_adicional['cargo_total']:.2f} €")
-                        ca2.metric("Base tramo fijo", f"{resumen_cargo_adicional['base_cargo']:.2f} €")
-                        ca3.metric("Base de aplicación", f"{resumen_cargo_adicional['base_aplicacion']:.2f} €")
-                        ca4.metric("Líneas afectadas", resumen_cargo_adicional["lineas_afectadas"])
-
-                        st.caption("Imputación del cargo adicional de gestión")
-                        st.dataframe(
-                            analisis_cargo_adicional["detalle"][
-                                [
-                                    col for col in [
-                                        "cn",
-                                        "descripcion",
-                                        "seccion_albaran",
-                                        "bruto",
-                                        "neto",
-                                        "cargo_gestion_adicional",
-                                        "neto_con_gestion_adicional",
-                                    ]
-                                    if col in analisis_cargo_adicional["detalle"].columns
-                                ]
-                            ]
+                        st.caption(
+                            f"Franquicia adicional: {resumen_cargo_adicional['cargo_total']:.2f} € · "
+                            f"Líneas afectadas: {resumen_cargo_adicional['lineas_afectadas']}"
                         )
 
         # -------------------------
@@ -2457,6 +2402,9 @@ def render_vida_pharma():
             resumen_bitransfer=resumen_conciliacion_bitransfer,
             analisis_transfer=analisis_transfer,
             analisis_clubes=analisis_clubes,
+            condicion_detectada=condicion_detectada,
+            analisis_ajuste=analisis_ajuste,
+            analisis_cargo_adicional=analisis_cargo_adicional,
         )
         if analisis_clubes and analisis_clubes.get("ok") and descuento_goteo_real is None:
             descuento_calculado = _descuento_goteo_real_desde_resumen(analisis_distribuidora=analisis)
