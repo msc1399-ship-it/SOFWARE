@@ -319,7 +319,6 @@ def conciliar_bitransfer_consumos(df_compras, resumen_consumos):
         "importe_neto_unitario",
         "cargo_teorico_unitario",
         "coste_real_unitario",
-        "venta_bruta",
     ]
     df_conciliado = df_compras[columnas_visibles].copy()
 

@@ -731,6 +731,34 @@ def _descuento_pct(bruto_total, coste_total):
     return round((1 - (coste_total / bruto_total)) * 100, 2)
 
 
+def _calcular_gastos_plataformas(resumen_consumos):
+    if not resumen_consumos:
+        return 0.0
+
+    plataformas = resumen_consumos.get("plataformas")
+    if plataformas is None or plataformas.empty:
+        return 0.0
+
+    total = 0.0
+    if "cargo_eur" in plataformas.columns:
+        total += pd.to_numeric(plataformas["cargo_eur"], errors="coerce").fillna(0).sum()
+
+    pendientes = plataformas.copy()
+    if "cargo_eur" in pendientes.columns:
+        pendientes = pendientes[pd.to_numeric(pendientes["cargo_eur"], errors="coerce").fillna(0) == 0]
+
+    if {"venta_bruta", "cargo_pct"}.issubset(pendientes.columns):
+        total += (
+            pd.to_numeric(pendientes["venta_bruta"], errors="coerce").fillna(0)
+            * (pd.to_numeric(pendientes["cargo_pct"], errors="coerce").fillna(0) / 100)
+        ).sum()
+
+    if "cuota" in plataformas.columns:
+        total += pd.to_numeric(plataformas["cuota"], errors="coerce").fillna(0).sum()
+
+    return round(float(total), 2)
+
+
 def _normalizar_texto_match(valor):
     if pd.isna(valor):
         return ""
@@ -1714,6 +1742,7 @@ def render_vida_pharma():
     analisis_ajuste = None
     analisis_cargo_adicional = None
     resumen_conciliacion_bitransfer = None
+    resumen_consumos_bitransfer = None
     condicion_detectada = None
     resultado_factura_normal = None
     resultado_factura_transfer = None
@@ -2043,6 +2072,7 @@ def render_vida_pharma():
                 if excel_consumos_bitransfer:
                     try:
                         resumen_consumos = bitransfer.leer_cuadro_resumen_consumos(excel_consumos_bitransfer)
+                        resumen_consumos_bitransfer = resumen_consumos
 
                         st.subheader("📊 Cuadro resumen de consumos normalizado")
 
@@ -2065,14 +2095,7 @@ def render_vida_pharma():
                         df_bt_compras = bitransfer.leer_listado_compras_bitransfer(excel_compras_bitransfer)
                         df_bt_compras = _enriquecer_con_maestro(df_bt_compras)
 
-                        st.subheader("📋 Listado de compras BitTransfer normalizado")
-
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("Códigos nacionales", df_bt_compras["cn"].nunique())
-                        c2.metric("Unidades", int(df_bt_compras["cantidad"].fillna(0).sum()))
-                        c3.metric("Importe neto", f"{df_bt_compras['importe_neto'].sum():.2f} €")
-
-                        _mostrar_dataframe_completo(df_bt_compras)
+                        st.success("Listado de compras BitTransfer cargado. El detalle se mostrará en la conciliación.")
 
                     except ValueError as error:
                         _mostrar_error_procesamiento("No se pudo leer el listado de compras BitTransfer.", error)
@@ -2094,30 +2117,6 @@ def render_vida_pharma():
                         c4.metric("Cargo resumen", f"{resumen_conciliacion['cargo_resumen']:.2f} €")
                         c5.metric("Cargo teórico", f"{resumen_conciliacion['cargo_teorico_compras']:.2f} €")
                         c6.metric("Dif. cargo", f"{resumen_conciliacion['diferencia_cargo']:.2f} €")
-
-                        if analisis_avantia:
-                            gestion_factura = float(resultado["gastos"].loc[
-                                resultado["gastos"]["tipo"] == "gestion",
-                                "importe"
-                            ].sum())
-                            cargo_bitransfer = resumen_conciliacion["cargo_resumen"]
-                            cargo_avantia = analisis_avantia["resumen"]["cargo_total"]
-                            gestion_calculada = cargo_bitransfer + cargo_avantia
-                            diferencia_gestion = gestion_factura - gestion_calculada
-
-                            st.subheader("🧮 Conciliación gastos de gestión")
-
-                            g1, g2, g3, g4 = st.columns(4)
-                            g1.metric("Gestión factura", f"{gestion_factura:.2f} €")
-                            g2.metric("BitTransfer", f"{cargo_bitransfer:.2f} €")
-                            g3.metric("Avantia", f"{cargo_avantia:.2f} €")
-                            g4.metric("Diferencia", f"{diferencia_gestion:.2f} €")
-
-                            if abs(diferencia_gestion) > 0.05:
-                                st.warning(
-                                    "Los gastos de gestión no cuadran exactamente con BitTransfer + Avantia. "
-                                    "Revisa que el cuadro de consumos y el cuadro rentabilidad Avantia correspondan al mismo periodo."
-                                )
 
                         if abs(resumen_conciliacion["diferencia_venta_bruta"]) <= 0.05:
                             st.success("La venta bruta del resumen cuadra con el listado de compras BitTransfer.")
@@ -2184,22 +2183,39 @@ def render_vida_pharma():
                     0.0 if not resumen_conciliacion_bitransfer else resumen_conciliacion_bitransfer["cargo_resumen"]
                 )
                 cargo_avantia = 0.0 if not analisis_avantia else analisis_avantia["resumen"]["cargo_total"]
-                gestion_calculada = cargo_bitransfer + cargo_avantia
+                cargo_plataformas = _calcular_gastos_plataformas(resumen_consumos_bitransfer)
+                gestion_calculada = cargo_bitransfer + cargo_avantia + cargo_plataformas
                 diferencia_gestion = gestion_factura - gestion_calculada
 
-                if gestion_factura > 0 and (cargo_bitransfer > 0 or cargo_avantia > 0 or condicion_detectada):
+                if gestion_factura > 0 and (
+                    cargo_bitransfer > 0
+                    or cargo_avantia > 0
+                    or cargo_plataformas > 0
+                    or condicion_detectada
+                ):
                     st.subheader("🧮 Conciliación global gastos de gestión")
 
-                    g1, g2, g3, g4 = st.columns(4)
+                    g1, g2, g3, g4, g5 = st.columns(5)
                     g1.metric("Gestión factura", f"{gestion_factura:.2f} €")
                     g2.metric("BitTransfer", f"{cargo_bitransfer:.2f} €")
-                    g3.metric("Avantia", f"{cargo_avantia:.2f} €")
-                    g4.metric("Diferencia", f"{diferencia_gestion:.2f} €")
+                    g3.metric("Plataformas", f"{cargo_plataformas:.2f} €")
+                    g4.metric("Avantia", f"{cargo_avantia:.2f} €")
+                    g5.metric("Diferencia", f"{diferencia_gestion:.2f} €")
 
                     penalizacion_bajo_consumo = _detectar_penalizacion_bajo_consumo(
                         condicion_detectada,
                         diferencia_gestion,
                     )
+                    if abs(diferencia_gestion) <= 0.05:
+                        st.success(
+                            "Los gastos de gestión de factura cuadran con BitTransfer, plataformas y Avantia."
+                        )
+                    elif cargo_bitransfer > 0 or cargo_avantia > 0 or cargo_plataformas > 0:
+                        st.warning(
+                            "Los gastos de gestión no cuadran exactamente con BitTransfer, plataformas y Avantia. "
+                            "Revisa que los cuadros subidos correspondan al mismo periodo."
+                        )
+
                     if penalizacion_bajo_consumo:
                         st.info(
                             "La diferencia de gestión coincide con la penalización por bajo consumo "
