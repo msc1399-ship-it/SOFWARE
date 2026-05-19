@@ -15,14 +15,14 @@ La aplicación está diseñada para procesar documentación de farmacia de forma
 
 - La app exige contraseña general antes de cargar datos.
 - La contraseña debe configurarse en Streamlit Secrets con `APP_PASSWORD`.
-- El modo auditor usa una clave separada en `DEBUG_PASSWORD`.
+- No existe una segunda clave de depuración.
 - No deben incluirse claves reales en el código ni en el repositorio.
 
 ## Interfaz y privacidad
 
-En modo producción se deben mostrar solo KPIs, resúmenes, conciliaciones y resultados agregados. Las tablas completas o información técnica quedan reservadas para `MODO_DEBUG`.
+Una vez autenticado, el usuario tiene acceso completo a KPIs, resúmenes, conciliaciones, tablas, rankings, informes y desgloses funcionales.
 
-No deben mostrarse nombres reales de archivos, trazas técnicas, sets internos de conciliación o tablas completas salvo en modo auditor y cuando sea necesario para revisión.
+No deben mostrarse nombres reales de archivos ni trazas técnicas innecesarias. La app mantiene procesamiento temporal y limpieza de sesión, pero no oculta información funcional tras una segunda clave.
 
 ## Validación de archivos
 

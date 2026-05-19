@@ -37,14 +37,9 @@ club_analysis = importlib.reload(club_analysis)
 distributor_analysis = importlib.reload(distributor_analysis)
 
 try:
-    DEBUG_PASSWORD = st.secrets.get("DEBUG_PASSWORD", "")
-except Exception:
-    DEBUG_PASSWORD = ""
-try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
 except Exception:
     APP_PASSWORD = ""
-MODO_DEBUG = False
 MAX_UPLOAD_MB = 50
 
 PROVEEDORES_BASE = {
@@ -82,15 +77,12 @@ def _guardar_dataset(clave, df):
     st.session_state[clave] = df
 
 
-def _mostrar_dataframe_debug(df, mensaje="Vista completa oculta por privacidad."):
-    if MODO_DEBUG:
-        st.dataframe(df)
-    else:
-        st.caption(f"{mensaje} Activa MODO_DEBUG para verla.")
+def _mostrar_dataframe_completo(df):
+    st.dataframe(df)
 
 
 def _mostrar_error_procesamiento(mensaje, error=None):
-    if MODO_DEBUG and error is not None:
+    if error is not None:
         st.error(f"{mensaje}: {error}")
     else:
         st.error(mensaje)
@@ -350,16 +342,15 @@ def _render_base_maestra_laboratorios():
             "Base EFG cargada como tabla maestra neutra. No contiene laboratorio recomendado fijo; "
             "la recomendación se calculará dinámicamente con datos reales de cada farmacia."
         )
-        if MODO_DEBUG:
-            if tabla_equivalencias_efg is not None and not tabla_equivalencias_efg.empty:
-                st.caption("Preview tabla_equivalencias_efg")
-                st.dataframe(tabla_equivalencias_efg.head(20))
-            if grupos_homogeneos_efg is not None and not grupos_homogeneos_efg.empty:
-                st.caption("Preview grupos_homogeneos")
-                st.dataframe(grupos_homogeneos_efg.head(20))
-            if opciones_por_grupo_efg is not None and not opciones_por_grupo_efg.empty:
-                st.caption("Preview opciones_por_grupo")
-                st.dataframe(opciones_por_grupo_efg.head(20))
+        if tabla_equivalencias_efg is not None and not tabla_equivalencias_efg.empty:
+            st.caption("Tabla equivalencias EFG")
+            st.dataframe(tabla_equivalencias_efg)
+        if grupos_homogeneos_efg is not None and not grupos_homogeneos_efg.empty:
+            st.caption("Grupos homogéneos")
+            st.dataframe(grupos_homogeneos_efg)
+        if opciones_por_grupo_efg is not None and not opciones_por_grupo_efg.empty:
+            st.caption("Opciones por grupo")
+            st.dataframe(opciones_por_grupo_efg)
 
     if maestro_df is not None and not maestro_df.empty:
         m1, m2 = st.columns(2)
@@ -411,7 +402,7 @@ def _mostrar_vistas_albaranes(df):
         titulo = "📦 Goteo" if tipo == "goteo" else "🚚 Transfer"
         st.header(f"{titulo}")
 
-        _mostrar_dataframe_debug(df_tipo, "Albaranes completos ocultos por privacidad.")
+        _mostrar_dataframe_completo(df_tipo)
 
         if "tipo" in df_tipo.columns:
             mask_faceta = df_tipo.apply(
@@ -491,9 +482,8 @@ def _mostrar_resumen_especialidad_cara(df):
         "base_iva4_sujeta_ajuste",
     ]
     columnas_debug = [col for col in columnas_debug if col in especialidad_cara.columns]
-    if MODO_DEBUG:
-        st.caption("Líneas detectadas como especialidad cara")
-        st.dataframe(especialidad_cara[columnas_debug])
+    st.caption("Líneas detectadas como especialidad cara")
+    st.dataframe(especialidad_cara[columnas_debug])
 
 
 def _guardar_analisis_distribuidora(proveedor_id, analisis):
@@ -527,13 +517,13 @@ def _mostrar_analisis_clubes(analisis_clubes):
         st.dataframe(oportunidades)
 
     escalados = analisis_clubes.get("escalados", pd.DataFrame())
-    if MODO_DEBUG and escalados is not None and not escalados.empty:
-        st.caption("Detalle técnico de escalados")
+    if escalados is not None and not escalados.empty:
+        st.caption("Detalle de escalados")
         st.dataframe(escalados)
 
     detalle = analisis_clubes.get("detalle_club", pd.DataFrame())
-    if MODO_DEBUG and detalle is not None and not detalle.empty:
-        st.caption("Detalle técnico de líneas club")
+    if detalle is not None and not detalle.empty:
+        st.caption("Detalle de líneas club")
         st.dataframe(detalle)
 
 
@@ -1432,8 +1422,7 @@ def render_facturas_laboratorios():
         archivos = _filtrar_archivos_validos(archivos, "Facturas de laboratorios")
     if archivos:
         st.success(f"{len(archivos)} archivo(s) de laboratorios cargado(s).")
-        if MODO_DEBUG:
-            st.dataframe(pd.DataFrame({"archivo": [f"archivo_{idx + 1}" for idx, _ in enumerate(archivos)]}))
+        st.dataframe(pd.DataFrame({"archivo": [f"archivo_{idx + 1}" for idx, _ in enumerate(archivos)]}))
     else:
         st.info("Sube aquí los Excel de facturas de laboratorios. Más adelante añadiremos su lectura específica.")
 
@@ -1813,12 +1802,9 @@ def render_vida_pharma():
 
     if condicion_detectada:
         st.subheader("🧭 Condición detectada")
-        if MODO_DEBUG:
-            c1, c2 = st.columns(2)
-            c1.metric("Nombre", condicion_detectada["nombre"])
-            c2.metric("Acrónimo", condicion_detectada["acronimo"])
-        else:
-            st.info("Condición detectada.")
+        c1, c2 = st.columns(2)
+        c1.metric("Nombre", condicion_detectada["nombre"])
+        c2.metric("Acrónimo", condicion_detectada["acronimo"])
 
     if not df_faceta_bidafarma.empty:
         analisis_faceta = faceta.analizar_faceta_v(df, df_faceta_bidafarma) if df is not None else None
@@ -1827,7 +1813,7 @@ def render_vida_pharma():
             resumen_faceta = analisis_faceta["resumen"]
             hay_cargo_tarifa = abs(resumen_faceta["margen_tramo_fijo_total"]) > 0.0001
             titulo_tarifa = "Albarán TP 74"
-            if condicion_detectada and MODO_DEBUG:
+            if condicion_detectada:
                 if hay_cargo_tarifa:
                     titulo_tarifa = f"Tarifa {condicion_detectada['acronimo']} · {condicion_detectada['nombre']}"
                 else:
@@ -1841,11 +1827,10 @@ def render_vida_pharma():
                 f3.metric("Base de aplicación", f"{resumen_faceta['base_aplicacion']:.2f} €")
                 f4.metric("Liquidaciones", f"{resumen_faceta['liquidaciones_total']:.2f} €")
                 st.caption("Conceptos detectados en albaranes TP 74")
-                _mostrar_dataframe_debug(
+                _mostrar_dataframe_completo(
                     analisis_faceta["conceptos"][
                         [col for col in ["fecha", "hora", "tp", "concepto", "importe"] if col in analisis_faceta["conceptos"].columns]
-                    ],
-                    "Conceptos completos del albarán TP 74 ocultos por privacidad.",
+                    ]
                 )
 
             if hay_cargo_tarifa and not analisis_faceta["detalle_tramo_fijo"].empty:
@@ -1893,10 +1878,7 @@ def render_vida_pharma():
                     ]
                 )
         else:
-            _mostrar_dataframe_debug(
-                df_faceta_bidafarma,
-                "Albaranes TP 74 completos ocultos por privacidad.",
-            )
+            _mostrar_dataframe_completo(df_faceta_bidafarma)
             st.info("Se ha detectado un albarán TP 74, pero todavía no hay líneas de compra goteo sobre las que imputar cargos o liquidaciones.")
 
     # =========================
@@ -1934,15 +1916,9 @@ def render_vida_pharma():
                 st.success("✅ Albaranes NORMAL conciliados")
             else:
                 if faltan:
-                    if MODO_DEBUG:
-                        st.error(f"Faltan: {faltan}")
-                    else:
-                        st.error(f"Faltan {len(faltan)} albaranes NORMAL por conciliar.")
+                    st.error(f"Faltan: {faltan}")
                 if sobran:
-                    if MODO_DEBUG:
-                        st.warning(f"Sobran: {sobran}")
-                    else:
-                        st.warning(f"Sobran {len(sobran)} albaranes NORMAL en factura.")
+                    st.warning(f"Sobran: {sobran}")
 
             st.subheader("💸 Gastos factura normal")
             st.dataframe(resultado["gastos"])
@@ -2164,10 +2140,7 @@ def render_vida_pharma():
                         c2.metric("Unidades", int(df_bt_compras["cantidad"].fillna(0).sum()))
                         c3.metric("Importe neto", f"{df_bt_compras['importe_neto'].sum():.2f} €")
 
-                        _mostrar_dataframe_debug(
-                            df_bt_compras,
-                            "Listado completo de compras BitTransfer oculto por privacidad.",
-                        )
+                        _mostrar_dataframe_completo(df_bt_compras)
 
                     except ValueError as error:
                         _mostrar_error_procesamiento("No se pudo leer el listado de compras BitTransfer.", error)
@@ -2261,10 +2234,7 @@ def render_vida_pharma():
                                     try:
                                         df_plataforma = bitransfer.leer_listado_compras_bitransfer(excel_plataforma)
                                         df_plataforma = _enriquecer_con_maestro(df_plataforma)
-                                        _mostrar_dataframe_debug(
-                                            df_plataforma,
-                                            f"Listado completo de productos de {nombre_plataforma} oculto por privacidad.",
-                                        )
+                                        _mostrar_dataframe_completo(df_plataforma)
                                     except ValueError as error:
                                         st.error(
                                             f"No se pudo leer el listado de productos de {nombre_plataforma}: {error}"
@@ -2367,15 +2337,9 @@ def render_vida_pharma():
                 st.success("✅ Albaranes TRANSFER conciliados")
             else:
                 if faltan:
-                    if MODO_DEBUG:
-                        st.error(f"Faltan en transfer: {faltan}")
-                    else:
-                        st.error(f"Faltan {len(faltan)} albaranes TRANSFER por conciliar.")
+                    st.error(f"Faltan en transfer: {faltan}")
                 if sobran:
-                    if MODO_DEBUG:
-                        st.warning(f"Sobran en transfer: {sobran}")
-                    else:
-                        st.warning(f"Sobran {len(sobran)} albaranes TRANSFER en factura.")
+                    st.warning(f"Sobran en transfer: {sobran}")
 
             st.subheader("🚚 Servicios logísticos")
             st.dataframe(resultado_transfer["gastos"])
@@ -2648,9 +2612,6 @@ st.set_page_config(layout="wide")
 st.title("📊 Auditoría de Compras Farmacia")
 
 _verificar_acceso_app()
-
-clave_modo_auditor = st.sidebar.text_input("Clave modo auditor", type="password")
-MODO_DEBUG = bool(DEBUG_PASSWORD) and clave_modo_auditor == DEBUG_PASSWORD
 
 if st.button("Borrar datos cargados"):
     st.session_state.clear()
