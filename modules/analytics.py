@@ -51,7 +51,18 @@ def _parece_numero_albaran(numero):
 
 
 def _columnas_albaran(df):
-    return [col for col in df.columns if "albar" in normalizar_nombre_columna(col)]
+    columnas = []
+    tokens_excluir = ["total", "importe", "base", "iva", "recargo", "fecha"]
+    tokens_numero = ["numero", "num", "n ", "nº", "nro", "albaran"]
+    for col in df.columns:
+        nombre = normalizar_nombre_columna(col)
+        if "albar" not in nombre:
+            continue
+        if any(token in nombre for token in tokens_excluir):
+            continue
+        if any(token in nombre for token in tokens_numero):
+            columnas.append(col)
+    return columnas
 
 
 def _extraer_albaranes_factura(df, tokens_fin_bloque):
@@ -68,8 +79,7 @@ def _extraer_albaranes_factura(df, tokens_fin_bloque):
         if len(texto) < 5:
             continue
 
-        candidatos = columnas or list(df.columns)
-        for col in candidatos:
+        for col in columnas:
             num = extraer_numero_albaran(row.get(col))
             if _parece_numero_albaran(num):
                 albaranes.append(num)

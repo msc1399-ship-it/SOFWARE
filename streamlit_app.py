@@ -103,7 +103,12 @@ def _normalizar_nombre_columna(columna):
 
 
 def _buscar_columna_albaran(columnas):
-    return next((col for col in columnas if "albar" in _normalizar_nombre_columna(col)), None)
+    tokens_excluir = ["total", "importe", "base", "iva", "recargo", "fecha"]
+    for col in columnas:
+        nombre = _normalizar_nombre_columna(col)
+        if "albar" in nombre and not any(token in nombre for token in tokens_excluir):
+            return col
+    return None
 
 
 def _guardar_dataset(clave, df):
