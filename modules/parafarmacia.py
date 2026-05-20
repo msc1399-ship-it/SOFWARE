@@ -44,6 +44,17 @@ def _buscar_columna(columnas, opciones):
     return None
 
 
+def _buscar_columnas(columnas, opciones):
+    columnas_norm = {_normalizar_texto(col): col for col in columnas}
+    opciones_norm = [_normalizar_texto(opcion) for opcion in opciones]
+    encontradas = []
+
+    for col_norm, col_original in columnas_norm.items():
+        if col_norm in opciones_norm or any(opcion and opcion in col_norm for opcion in opciones_norm):
+            encontradas.append(col_original)
+    return encontradas
+
+
 def _normalizar_cn(valor):
     if pd.isna(valor):
         return None
@@ -128,7 +139,7 @@ def detectar_parafarmacia_financiada(df_compras, df_nomenclator=None):
     bruto_col = _buscar_columna(df.columns, ["bruto", "importe bruto", "precio bruto"])
     neto_col = _buscar_columna(df.columns, ["neto", "importe neto", "precio"])
     unidades_col = _buscar_columna(df.columns, ["unidades", "cantidad"])
-    pvp_col = _buscar_columna(df.columns, PVP_COLUMN_OPTIONS)
+    pvp_cols = _buscar_columnas(df.columns, PVP_COLUMN_OPTIONS)
 
     iva = _serie_numerica(df, iva_col)
     bruto = _serie_numerica(df, bruto_col)
@@ -160,21 +171,24 @@ def detectar_parafarmacia_financiada(df_compras, df_nomenclator=None):
         extras = nomenclator[["cn", "laboratorio_nomenclator", "familia_nomenclator", "descripcion_nomenclator"]]
         df = df.merge(extras, on="cn", how="left")
 
-    pvp_numerico = _serie_numerica(df, pvp_col) if pvp_col else pd.Series([0.0] * len(df), index=df.index)
+    if pvp_cols:
+        pvp_numerico = pd.concat([_serie_numerica(df, col) for col in pvp_cols], axis=1).max(axis=1)
+    else:
+        pvp_numerico = pd.Series([0.0] * len(df), index=df.index)
     mask_pvp_real = pvp_numerico.gt(0)
-    texto_pvp = (
-        df[pvp_col].astype(str).map(_normalizar_texto)
-        if pvp_col and pvp_col in df.columns
-        else pd.Series("", index=df.index)
-    )
+    texto_pvp = pd.Series("", index=df.index)
+    for col in pvp_cols:
+        texto_pvp = (texto_pvp + " " + df[col].astype(str).map(_normalizar_texto)).str.strip()
     mask_neto = texto_pvp.str.contains(r"\bneto\b", na=False)
 
     mask_base = mask_iva10 & mask_parafarmacia & ~especialidad_cara
-    mask_financiada = mask_base & mask_nomenclator & mask_pvp_real & ~mask_neto
+    mask_financiada_nomenclator = mask_base & mask_nomenclator
+    mask_financiada_pvp = mask_base & ~mask_nomenclator & mask_pvp_real & ~mask_neto
+    mask_financiada = mask_financiada_nomenclator | mask_financiada_pvp
 
     fuente = pd.Series("no_detectada", index=df.index, dtype="object")
-    fuente[mask_financiada] = "nomenclator"
-    fuente[mask_neto] = "no_detectada"
+    fuente[mask_financiada_nomenclator] = "nomenclator"
+    fuente[mask_financiada_pvp] = "pvp_iva"
 
     df["es_parafarmacia_financiada"] = mask_financiada.fillna(False).astype(bool)
     df["tipo_parafarmacia"] = "no_aplica"
