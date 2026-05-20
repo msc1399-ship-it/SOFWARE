@@ -646,10 +646,8 @@ def _mostrar_vistas_albaranes(df):
         df_tipo["unidades"] = pd.to_numeric(df_tipo["unidades"], errors="coerce").fillna(0.0)
         df_tipo["es_abono"] = df_tipo["neto"] < 0
         abonos = df_tipo[df_tipo["es_abono"]]
-        compras = df_tipo[~df_tipo["es_abono"]]
-
-        total_bruto = compras["bruto"].sum()
-        total_neto = compras["neto"].sum()
+        total_bruto = df_tipo["bruto"].sum()
+        total_neto = df_tipo["neto"].sum()
         total_abonos = abonos["neto"].sum()
 
         descuento = (total_bruto - total_neto) / total_bruto * 100 if total_bruto else 0
@@ -1530,9 +1528,14 @@ def _resumen_bidafarma(
     descripcion_norm = lineas_resumen.get("descripcion", serie_vacia).astype(str).str.lower().str.strip()
     seccion_norm = lineas_resumen.get("seccion_albaran", serie_vacia).astype(str).str.lower().str.strip()
     tipo_compra_norm = lineas_resumen.get("tipo_compra", serie_vacia).astype(str).str.lower().str.strip()
+    texto_club = pd.Series("", index=lineas_resumen.index, dtype="object")
+    for columna in lineas_resumen.columns:
+        nombre = _normalizar_nombre_columna(columna)
+        if any(token in nombre for token in ["categoria", "descuento", "cargo", "dc"]):
+            texto_club = texto_club + " " + lineas_resumen[columna].astype(str).str.lower()
 
     mask_bitransfer = seccion_norm.eq("bitransfer")
-    mask_club = seccion_norm.eq("club")
+    mask_club = seccion_norm.eq("club") | descripcion_norm.str.contains("club", na=False) | texto_club.str.contains("club", na=False)
     mask_avantia = seccion_norm.eq("avantia") | descripcion_norm.str.contains("avantia", na=False)
     mask_especialidad_cara = lineas_resumen.get(
         "es_especialidad_cara",

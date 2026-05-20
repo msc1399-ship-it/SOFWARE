@@ -89,8 +89,30 @@ def detectar_compras_club(df):
         return df
 
     texto = pd.Series("", index=df.index, dtype="object")
-    for columna in ["seccion_albaran", "descripcion", "observaciones", "concepto", "tipo_compra"]:
-        if columna in df.columns:
+    columnas_prioritarias = [
+        "seccion_albaran",
+        "descripcion",
+        "observaciones",
+        "concepto",
+        "tipo_compra",
+        "categoria",
+        "categoría",
+        "descuento",
+        "cargo",
+        "descuento_cargo",
+        "dc_descuento_cargo",
+        "descuento cargo",
+        "dc",
+    ]
+    columnas_norm = {_normalizar_columna(col): col for col in df.columns}
+    for columna in columnas_prioritarias:
+        origen = columnas_norm.get(_normalizar_columna(columna))
+        if origen is not None:
+            texto = texto + " " + df[origen].astype(str)
+
+    for columna in df.columns:
+        nombre = _normalizar_columna(columna)
+        if ("categoria" in nombre or "descuento" in nombre or "cargo" in nombre) and columna not in columnas_prioritarias:
             texto = texto + " " + df[columna].astype(str)
 
     texto = texto.map(_normalizar_texto)

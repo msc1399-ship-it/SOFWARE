@@ -95,6 +95,16 @@ def _clasificar_bloques(df):
     seccion = df.get("seccion_albaran", pd.Series("", index=df.index)).astype(str).str.lower().str.strip()
     tipo_compra = df.get("tipo_compra", pd.Series("", index=df.index)).astype(str).str.lower().str.strip()
     descripcion = df.get("descripcion", pd.Series("", index=df.index)).astype(str).str.lower()
+    texto_club = pd.Series("", index=df.index, dtype="object")
+    for columna in df.columns:
+        nombre = str(columna).lower().strip()
+        if any(token in nombre for token in ["categoria", "categoría", "descuento", "cargo", "dc"]):
+            texto_club = texto_club + " " + df[columna].astype(str).str.lower()
+    mask_club = (
+        seccion.eq("club")
+        | descripcion.str.contains("club|seleccion genericos|seleccion generica", na=False)
+        | texto_club.str.contains("club|seleccion genericos|seleccion generica", na=False)
+    )
     especialidad_cara = df.get("es_especialidad_cara", pd.Series(False, index=df.index)).fillna(False).astype(bool)
     parafarmacia_financiada = df.get(
         "es_parafarmacia_financiada",
@@ -105,11 +115,10 @@ def _clasificar_bloques(df):
     bloque[tipo_compra.eq("transfer")] = "transfer"
     bloque[seccion.eq("bitransfer") | descripcion.str.contains("bitransfer|bittransfer", na=False)] = "bitransfer"
     bloque[descripcion.str.contains("plataforma", na=False)] = "plataforma"
-    bloque[seccion.eq("club") | descripcion.str.contains("club|seleccion genericos|seleccion generica", na=False)] = "clubes"
     bloque[seccion.eq("avantia") | descripcion.str.contains("avantia", na=False)] = "avantia"
     bloque[descripcion.str.contains("nexo", na=False)] = "nexo"
-    bloque[tipo_compra.eq("goteo") & seccion.eq("especialidad")] = "especialidad"
-    bloque[tipo_compra.eq("goteo") & seccion.eq("parafarmacia")] = "parafarmacia"
+    bloque[tipo_compra.eq("goteo") & seccion.eq("especialidad") & ~mask_club] = "especialidad"
+    bloque[tipo_compra.eq("goteo") & seccion.eq("parafarmacia") & ~mask_club] = "parafarmacia"
     bloque[especialidad_cara] = "especialidad_cara"
     bloque[parafarmacia_financiada] = "parafarmacia_financiada"
 
@@ -119,11 +128,13 @@ def _clasificar_bloques(df):
         & ~especialidad_cara
         & ~parafarmacia_financiada
         & ~seccion.isin(["club", "avantia", "bitransfer"])
+        & ~mask_club
         & ~descripcion.str.contains("club|avantia|bitransfer|bittransfer|nexo|plataforma", na=False)
     )
     bloque[goteo] = "goteo_puro"
     bloque[goteo & seccion.eq("especialidad")] = "especialidad"
     bloque[goteo & seccion.eq("parafarmacia")] = "parafarmacia"
+    bloque[mask_club] = "clubes"
     bloque[parafarmacia_financiada] = "parafarmacia_financiada"
     return bloque
 
@@ -194,9 +205,8 @@ def _solo_compras(trabajo):
 
 def calcular_volumen_compra(df):
     trabajo = _base_trabajo(df)
-    compras = _solo_compras(trabajo)
-    bruto_total = float(compras["bruto_num"].sum()) if not compras.empty else 0.0
-    neto_total = float(compras["neto_num"].sum()) if not compras.empty else 0.0
+    bruto_total = float(trabajo["bruto_num"].sum()) if not trabajo.empty else 0.0
+    neto_total = float(trabajo["neto_num"].sum()) if not trabajo.empty else 0.0
     abonos_total = float(trabajo.loc[trabajo["es_abono"], "neto_num"].sum()) if not trabajo.empty else 0.0
     periodo = _periodo(df)
     meses = (periodo or {}).get("meses_equivalentes") or None
@@ -206,13 +216,13 @@ def calcular_volumen_compra(df):
         "compra_total_periodo": round(bruto_total, 2),
         "compra_neta_periodo": round(neto_total, 2),
         "abonos_totales": round(abonos_total, 2),
-        "total_neto_con_abonos": round(neto_total + abonos_total, 2),
+        "total_neto_con_abonos": round(neto_total, 2),
         "compra_total_mensual": round(bruto_total / meses, 2) if meses else None,
-        "unidades_totales": round(float(compras["unidades_num"].sum()), 2) if not compras.empty else 0.0,
+        "unidades_totales": round(float(trabajo["unidades_num"].sum()), 2) if not trabajo.empty else 0.0,
     }
 
     for tipo in TIPOS_ANALISIS:
-        parte = compras[compras["bloque_analisis"].eq(tipo)] if not compras.empty else pd.DataFrame()
+        parte = trabajo[trabajo["bloque_analisis"].eq(tipo)] if not trabajo.empty else pd.DataFrame()
         bruto = float(parte["bruto_num"].sum()) if not parte.empty else 0.0
         volumen[tipo] = {
             "bruto": round(bruto, 2),
@@ -231,12 +241,11 @@ def calcular_desglose_por_tipo(
     analisis_transfer=None,
 ):
     trabajo = _base_trabajo(df)
-    compras = _solo_compras(trabajo)
     filas = []
-    bruto_total = float(compras["bruto_num"].sum()) if not compras.empty else 0.0
+    bruto_total = float(trabajo["bruto_num"].sum()) if not trabajo.empty else 0.0
 
     for tipo in TIPOS_ANALISIS:
-        parte = compras[compras["bloque_analisis"].eq(tipo)] if not compras.empty else pd.DataFrame()
+        parte = trabajo[trabajo["bloque_analisis"].eq(tipo)] if not trabajo.empty else pd.DataFrame()
         bruto = float(parte["bruto_num"].sum()) if not parte.empty else 0.0
         neto = float(parte["neto_num"].sum()) if not parte.empty else 0.0
         unidades = float(parte["unidades_num"].sum()) if not parte.empty else 0.0
@@ -343,9 +352,9 @@ def calcular_descuentos_reales(df, desglose=None, gastos_resumen=None):
 
     bruto_goteo = sum(float(_valor(bloque, "bruto") or 0) for bloque in ["especialidad", "parafarmacia"])
     coste_goteo = sum(float(_valor(bloque, "coste_ajustado") or 0) for bloque in ["especialidad", "parafarmacia"])
-    compras = _solo_compras(_base_trabajo(df))
-    bruto_total = float(compras["bruto_num"].sum()) if not compras.empty else 0.0
-    coste_total = float(compras["neto_num"].sum()) + float(gastos_resumen.get("total_gastos", 0) or 0) if not compras.empty else 0.0
+    trabajo = _base_trabajo(df)
+    bruto_total = float(trabajo["bruto_num"].sum()) if not trabajo.empty else 0.0
+    coste_total = float(trabajo["neto_num"].sum()) + float(gastos_resumen.get("total_gastos", 0) or 0) if not trabajo.empty else 0.0
 
     aparente_goteo = _descuento_pct(
         bruto_goteo,
