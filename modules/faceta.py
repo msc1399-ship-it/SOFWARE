@@ -218,7 +218,8 @@ def extraer_faceta_desde_lineas(df_compras):
     if df_faceta.empty:
         return pd.DataFrame()
 
-    df_faceta["concepto"] = df_faceta.get("descripcion", "").astype(str)
+    serie_vacia_faceta = pd.Series("", index=df_faceta.index)
+    df_faceta["concepto"] = df_faceta.get("descripcion", serie_vacia_faceta).astype(str)
     df_faceta["concepto_normalizado"] = df_faceta["concepto"].apply(_normalizar_texto)
     df_faceta["importe"] = _serie_numerica(df_faceta, "neto")
     df_faceta["tp"] = _serie_numerica(df_faceta, "tipo")
@@ -243,7 +244,8 @@ def analizar_faceta_v(df_compras, df_faceta):
     if "seccion_albaran" not in df_goteo.columns:
         return None
 
-    df_goteo["descripcion"] = df_goteo.get("descripcion", "").astype(str)
+    serie_vacia_goteo = pd.Series("", index=df_goteo.index)
+    df_goteo["descripcion"] = df_goteo.get("descripcion", serie_vacia_goteo).astype(str)
     df_goteo["bruto"] = _serie_numerica(df_goteo, "bruto")
     df_goteo["neto"] = _serie_numerica(df_goteo, "neto")
     df_goteo["unidades"] = _serie_numerica(df_goteo, "unidades")

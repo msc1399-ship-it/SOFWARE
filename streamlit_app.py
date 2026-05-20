@@ -1153,7 +1153,8 @@ def _lineas_elegibles_goteo_puro(df):
     detalle["bruto"] = _serie_numerica(detalle, "bruto")
     detalle["neto"] = _serie_numerica(detalle, "neto")
     detalle["iva"] = _serie_numerica(detalle, "iva")
-    detalle["descripcion"] = detalle.get("descripcion", "").astype(str)
+    serie_vacia = pd.Series("", index=detalle.index)
+    detalle["descripcion"] = detalle.get("descripcion", serie_vacia).astype(str)
     descripcion_norm = detalle["descripcion"].str.lower()
     no_especialidad_cara = ~detalle.get(
         "es_especialidad_cara",
@@ -1163,10 +1164,12 @@ def _lineas_elegibles_goteo_puro(df):
         "es_parafarmacia_financiada",
         pd.Series(False, index=detalle.index),
     ).fillna(False).astype(bool)
+    tipo_compra_norm = detalle.get("tipo_compra", serie_vacia).astype(str).str.lower().str.strip()
+    seccion_norm = detalle.get("seccion_albaran", serie_vacia).astype(str).str.lower().str.strip()
 
     mask = (
-        detalle["tipo_compra"].eq("goteo")
-        & detalle["seccion_albaran"].isin(["especialidad", "parafarmacia"])
+        tipo_compra_norm.eq("goteo")
+        & seccion_norm.isin(["especialidad", "parafarmacia"])
         & no_especialidad_cara
         & no_parafarmacia_financiada
         & ~detalle["neto"].lt(0)
@@ -1189,16 +1192,19 @@ def _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta=None
     df_base["bruto"] = _serie_numerica(df_base, "bruto")
     df_base["neto"] = _serie_numerica(df_base, "neto")
     df_base["iva"] = _serie_numerica(df_base, "iva")
-    descripcion_norm = df_base.get("descripcion", "").astype(str).str.lower()
+    serie_vacia = pd.Series("", index=df_base.index)
+    descripcion_norm = df_base.get("descripcion", serie_vacia).astype(str).str.lower()
     no_especialidad_cara = ~df_base.get(
         "es_especialidad_cara",
         pd.Series(False, index=df_base.index),
     ).fillna(False).astype(bool)
+    tipo_compra_norm = df_base.get("tipo_compra", serie_vacia).astype(str).str.lower().str.strip()
+    seccion_norm = df_base.get("seccion_albaran", serie_vacia).astype(str).str.lower().str.strip()
 
     mask_elegible = (
-        df_base["tipo_compra"].eq("goteo")
+        tipo_compra_norm.eq("goteo")
         & df_base["iva"].eq(4)
-        & df_base["seccion_albaran"].eq("especialidad")
+        & seccion_norm.eq("especialidad")
         & no_especialidad_cara
         & (df_base["bruto"].abs() <= 96)
         & df_base["bruto"].ne(0)
@@ -1325,9 +1331,10 @@ def _resumen_bidafarma(
     if lineas_resumen.empty:
         return None
 
-    descripcion_norm = lineas_resumen.get("descripcion", "").astype(str).str.lower().str.strip()
-    seccion_norm = lineas_resumen.get("seccion_albaran", "").astype(str).str.lower().str.strip()
-    tipo_compra_norm = lineas_resumen.get("tipo_compra", "").astype(str).str.lower().str.strip()
+    serie_vacia = pd.Series("", index=lineas_resumen.index)
+    descripcion_norm = lineas_resumen.get("descripcion", serie_vacia).astype(str).str.lower().str.strip()
+    seccion_norm = lineas_resumen.get("seccion_albaran", serie_vacia).astype(str).str.lower().str.strip()
+    tipo_compra_norm = lineas_resumen.get("tipo_compra", serie_vacia).astype(str).str.lower().str.strip()
 
     mask_bitransfer = seccion_norm.eq("bitransfer")
     mask_club = seccion_norm.eq("club")
