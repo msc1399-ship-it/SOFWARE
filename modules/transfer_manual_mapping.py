@@ -10,10 +10,25 @@ PORCENTAJE_CARGO_TRANSFER = 0.017
 def _normalizar_albaran(valor):
     if pd.isna(valor):
         return ""
-    texto = str(valor).strip()
-    if re.match(r"^\d+\.0$", texto):
-        texto = texto[:-2]
-    return re.sub(r"[^\dA-Za-z-]", "", texto)
+
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        if float(valor).is_integer():
+            return str(int(valor))
+
+    texto = str(valor).lower().strip()
+    if not texto:
+        return ""
+
+    texto = re.sub(r"\.0+$", "", texto)
+    if re.fullmatch(r"[a-z.\s-]*\d[\d.\s-]*", texto):
+        return re.sub(r"\D", "", texto)
+
+    grupos = re.findall(r"\d+", texto)
+    grupos_largos = [grupo for grupo in grupos if len(grupo) >= 4]
+    if grupos_largos:
+        return grupos_largos[-1]
+
+    return re.sub(r"\D", "", texto) or texto
 
 
 def _serie_numerica(df, columna):

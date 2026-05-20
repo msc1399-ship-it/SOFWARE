@@ -6,14 +6,29 @@ import re
 # =========================
 
 def extraer_numero_albaran(texto):
+    if pd.isna(texto):
+        return None
+
+    if isinstance(texto, (int, float)) and not isinstance(texto, bool):
+        if float(texto).is_integer():
+            return str(int(texto))
+
     texto = str(texto).lower().strip()
+    if not texto:
+        return None
 
-    match = re.match(r"^[a-z]{0,3}-?\d+$", texto)
+    texto = re.sub(r"\.0+$", "", texto)
+    if re.fullmatch(r"[a-z.\s-]*\d[\d.\s-]*", texto):
+        numero = re.sub(r"\D", "", texto)
+        return numero or None
 
-    if match:
-        return re.sub(r"[^\d]", "", texto)
+    grupos = re.findall(r"\d+", texto)
+    grupos_largos = [grupo for grupo in grupos if len(grupo) >= 4]
+    if grupos_largos:
+        return grupos_largos[-1]
 
-    return None
+    numero = re.sub(r"\D", "", texto)
+    return numero or None
 
 
 def limpiar_texto(texto):
