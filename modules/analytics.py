@@ -1,5 +1,6 @@
 import pandas as pd
 import re
+import unicodedata
 
 # =========================
 # UTILIDADES
@@ -31,6 +32,13 @@ def extraer_numero_albaran(texto):
     return numero or None
 
 
+def normalizar_nombre_columna(columna):
+    texto = str(columna).lower().strip()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", texto).strip()
+
+
 def limpiar_texto(texto):
     texto = re.sub(r"\d+(\.\d+)?", "", texto)
     return texto.strip()
@@ -49,13 +57,13 @@ def limpiar_concepto_abono(texto):
 def analizar_factura_bidafarma(file):
 
     df = pd.read_excel(file)
-    df.columns = [c.lower().strip() for c in df.columns]
+    df.columns = [normalizar_nombre_columna(c) for c in df.columns]
 
     albaranes = []
     gastos = []
     ajustes_comerciales = []
 
-    col_albaran = next((c for c in df.columns if "albaran" in c), None)
+    col_albaran = next((c for c in df.columns if "albaran" in c or "albar" in c), None)
 
     leyendo_albaranes = True
 
@@ -159,13 +167,13 @@ def analizar_factura_bidafarma(file):
 def analizar_factura_transfer(file):
 
     df = pd.read_excel(file)
-    df.columns = [c.lower().strip() for c in df.columns]
+    df.columns = [normalizar_nombre_columna(c) for c in df.columns]
 
     albaranes = []
     gastos = []
     abonos = []
 
-    col_albaran = next((c for c in df.columns if "albaran" in c), None)
+    col_albaran = next((c for c in df.columns if "albaran" in c or "albar" in c), None)
 
     leyendo_albaranes = True
 
