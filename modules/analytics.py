@@ -109,6 +109,62 @@ def _sumar_total_albaranes_factura(df):
     return round(total, 2) if encontrados else None
 
 
+def _detectar_columnas_albaran_en_crudo(df_raw):
+    col_albaran = None
+    col_total = None
+    fila_cabecera = None
+
+    for idx, row in df_raw.iterrows():
+        for col_idx, valor in row.items():
+            texto = normalizar_texto(valor)
+            if "albar" not in texto:
+                continue
+            if any(token in texto for token in ["total", "importe", "base"]):
+                col_total = col_idx
+            else:
+                col_albaran = col_idx
+            fila_cabecera = idx
+        if col_albaran is not None:
+            return fila_cabecera, col_albaran, col_total
+
+    return None, None, None
+
+
+def _extraer_albaranes_factura_cruda(file):
+    if hasattr(file, "seek"):
+        file.seek(0)
+    df_raw = pd.read_excel(file, header=None)
+    if hasattr(file, "seek"):
+        file.seek(0)
+
+    fila_cabecera, col_albaran, col_total = _detectar_columnas_albaran_en_crudo(df_raw)
+    if col_albaran is None:
+        return [], None
+
+    albaranes = []
+    total = 0.0
+    total_encontrados = 0
+    inicio = 0 if fila_cabecera is None else int(fila_cabecera) + 1
+
+    for _, row in df_raw.iloc[inicio:].iterrows():
+        texto_fila = normalizar_texto(" ".join(str(x) for x in row.values if pd.notna(x)))
+        if any(token in texto_fila for token in ["totales", "bases", "total compras"]):
+            break
+
+        numero = extraer_numero_albaran(row.get(col_albaran))
+        if not _parece_numero_albaran(numero):
+            continue
+        albaranes.append(numero)
+
+        if col_total is not None:
+            importe = _numero_decimal(row.get(col_total))
+            if importe is not None:
+                total += importe
+                total_encontrados += 1
+
+    return albaranes, (round(total, 2) if total_encontrados else None)
+
+
 def _extraer_albaranes_factura(df, tokens_fin_bloque):
     albaranes = []
     columnas = _columnas_albaran(df)
@@ -166,6 +222,10 @@ def analizar_factura_bidafarma(file):
         tokens_fin_bloque=["servicio", "gestion", "avantia", "ajuste comercial"],
     )
     total_albaranes_factura = _sumar_total_albaranes_factura(df)
+    if not albaranes:
+        albaranes, total_albaranes_factura_crudo = _extraer_albaranes_factura_cruda(file)
+        if total_albaranes_factura is None:
+            total_albaranes_factura = total_albaranes_factura_crudo
 
     for _, row in df.iterrows():
 
@@ -270,6 +330,10 @@ def analizar_factura_transfer(file):
         tokens_fin_bloque=["log", "abono", "laboratorio"],
     )
     total_albaranes_factura = _sumar_total_albaranes_factura(df)
+    if not albaranes:
+        albaranes, total_albaranes_factura_crudo = _extraer_albaranes_factura_cruda(file)
+        if total_albaranes_factura is None:
+            total_albaranes_factura = total_albaranes_factura_crudo
 
     for _, row in df.iterrows():
 
