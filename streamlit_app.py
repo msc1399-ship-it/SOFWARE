@@ -13,7 +13,7 @@ import modules.bitransfer as bitransfer
 import modules.servicios as servicios
 import modules.avantia as avantia
 import modules.faceta as faceta
-import modules.condiciones_bidafarma as condiciones_bidafarma
+import modules.condiciones_proveedor_b as condiciones_proveedor_b
 import modules.maestro_laboratorios as maestro_laboratorios
 import modules.nomenclator_aemps as nomenclator_aemps
 import modules.ventas as ventas
@@ -24,12 +24,13 @@ import modules.club_analysis as club_analysis
 import modules.distributor_analysis as distributor_analysis
 import modules.parafarmacia as parafarmacia
 import modules.transfer_manual_mapping as transfer_manual_mapping
+import modules.maestros_persistentes as maestros_persistentes
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
 avantia = importlib.reload(avantia)
 faceta = importlib.reload(faceta)
-condiciones_bidafarma = importlib.reload(condiciones_bidafarma)
+condiciones_proveedor_b = importlib.reload(condiciones_proveedor_b)
 maestro_laboratorios = importlib.reload(maestro_laboratorios)
 nomenclator_aemps = importlib.reload(nomenclator_aemps)
 ventas = importlib.reload(ventas)
@@ -40,6 +41,7 @@ club_analysis = importlib.reload(club_analysis)
 distributor_analysis = importlib.reload(distributor_analysis)
 parafarmacia = importlib.reload(parafarmacia)
 transfer_manual_mapping = importlib.reload(transfer_manual_mapping)
+maestros_persistentes = importlib.reload(maestros_persistentes)
 
 try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
@@ -161,8 +163,112 @@ def _mostrar_tarjeta_parafarmacia_financiada(df):
     )
 
 
+def _procesar_equivalencias_efg(equivalencias_file, persistir=False):
+    efg_data = equivalencias_efg.leer_base_equivalencias_efg(equivalencias_file)
+    st.session_state["tabla_equivalencias_efg"] = efg_data["tabla_equivalencias_efg"]
+    st.session_state["grupos_homogeneos_efg"] = efg_data["grupos_homogeneos"]
+    st.session_state["opciones_por_grupo_efg"] = efg_data["opciones_por_grupo"]
+    st.session_state["resumen_equivalencias_efg"] = efg_data["resumen"]
+    st.session_state["equivalencias_efg_cargadas"] = True
+    if persistir:
+        maestros_persistentes.guardar_archivo("efg", equivalencias_file)
+
+
+def _procesar_maestro_ministerio(ministerio_file, persistir=False):
+    ministerio_df = maestro_laboratorios.leer_maestro_laboratorios(ministerio_file)
+    ministerio_df["fuente_maestro"] = "ministerio_facturacion"
+    if "tipo_producto" not in ministerio_df.columns:
+        ministerio_df["tipo_producto"] = None
+    st.session_state["maestro_ministerio_df"] = ministerio_df
+    st.session_state["maestro_ministerio_nombre"] = "cargado"
+    if hasattr(ministerio_file, "seek"):
+        ministerio_file.seek(0)
+    try:
+        st.session_state["nomenclator_parafarmacia_financiada_df"] = normalizar_columnas_nomenclator(
+            pd.read_excel(ministerio_file)
+        )
+    except ValueError:
+        st.session_state["nomenclator_parafarmacia_financiada_df"] = None
+    if persistir:
+        maestros_persistentes.guardar_archivo("ministerio", ministerio_file)
+
+
+def _procesar_maestro_manual(maestro_file, persistir=False):
+    maestro_df = maestro_laboratorios.leer_maestro_laboratorios(maestro_file)
+    maestro_df["fuente_maestro"] = "manual"
+    st.session_state["maestro_laboratorios_df"] = maestro_df
+    st.session_state["maestro_laboratorios_nombre"] = "cargado"
+    if persistir:
+        maestros_persistentes.guardar_archivo("manual", maestro_file)
+
+
+def _procesar_nomenclator_aemps(nomenclator_file, persistir=False):
+    nomenclator_df = nomenclator_aemps.leer_nomenclator_aemps(nomenclator_file)
+    st.session_state["maestro_medicamentos_aemps_df"] = nomenclator_df
+    st.session_state["maestro_medicamentos_aemps_nombre"] = "cargado"
+    if persistir:
+        maestros_persistentes.guardar_archivo("aemps", nomenclator_file)
+
+
+def _limpiar_maestro_en_sesion(clave):
+    claves_por_tipo = {
+        "ministerio": [
+            "maestro_ministerio_df",
+            "maestro_ministerio_nombre",
+            "nomenclator_parafarmacia_financiada_df",
+        ],
+        "manual": ["maestro_laboratorios_df", "maestro_laboratorios_nombre"],
+        "aemps": ["maestro_medicamentos_aemps_df", "maestro_medicamentos_aemps_nombre"],
+        "efg": [
+            "tabla_equivalencias_efg",
+            "grupos_homogeneos_efg",
+            "opciones_por_grupo_efg",
+            "resumen_equivalencias_efg",
+            "equivalencias_efg_cargadas",
+        ],
+    }
+    for clave_sesion in claves_por_tipo.get(clave, []):
+        st.session_state.pop(clave_sesion, None)
+
+
+def _mostrar_estado_maestro_persistente(clave, etiqueta):
+    info = maestros_persistentes.obtener_metadata(clave)
+    if not info:
+        st.caption("Sin base guardada.")
+        return
+
+    st.success(f"Base guardada: {info.get('original_name', etiqueta)}")
+    st.caption(f"Actualizada: {info.get('updated_at', '-')}")
+    if st.button(f"Eliminar {etiqueta}", key=f"eliminar_maestro_{clave}"):
+        maestros_persistentes.eliminar_archivo(clave)
+        _limpiar_maestro_en_sesion(clave)
+        st.rerun()
+
+
 def _asegurar_maestros_en_sesion():
-    return
+    if "tabla_equivalencias_efg" not in st.session_state and maestros_persistentes.hay_archivo("efg"):
+        try:
+            _procesar_equivalencias_efg(maestros_persistentes.abrir_archivo("efg"), persistir=False)
+        except ValueError as error:
+            _mostrar_error_procesamiento("No se pudo cargar la base EFG guardada.", error)
+
+    if "maestro_ministerio_df" not in st.session_state and maestros_persistentes.hay_archivo("ministerio"):
+        try:
+            _procesar_maestro_ministerio(maestros_persistentes.abrir_archivo("ministerio"), persistir=False)
+        except ValueError as error:
+            _mostrar_error_procesamiento("No se pudo cargar el nomenclátor del Ministerio guardado.", error)
+
+    if "maestro_laboratorios_df" not in st.session_state and maestros_persistentes.hay_archivo("manual"):
+        try:
+            _procesar_maestro_manual(maestros_persistentes.abrir_archivo("manual"), persistir=False)
+        except ValueError as error:
+            _mostrar_error_procesamiento("No se pudo cargar la base manual guardada.", error)
+
+    if "maestro_medicamentos_aemps_df" not in st.session_state and maestros_persistentes.hay_archivo("aemps"):
+        try:
+            _procesar_nomenclator_aemps(maestros_persistentes.abrir_archivo("aemps"), persistir=False)
+        except ValueError as error:
+            _mostrar_error_procesamiento("No se pudo cargar el Nomenclátor AEMPS guardado.", error)
 
 
 def _obtener_maestro_laboratorios():
@@ -211,14 +317,12 @@ def _render_uploader_equivalencias_efg():
             equivalencias_file = None
     if equivalencias_file:
         try:
-            efg_data = equivalencias_efg.leer_base_equivalencias_efg(equivalencias_file)
-            st.session_state["tabla_equivalencias_efg"] = efg_data["tabla_equivalencias_efg"]
-            st.session_state["grupos_homogeneos_efg"] = efg_data["grupos_homogeneos"]
-            st.session_state["opciones_por_grupo_efg"] = efg_data["opciones_por_grupo"]
-            st.session_state["resumen_equivalencias_efg"] = efg_data["resumen"]
-            st.session_state["equivalencias_efg_cargadas"] = True
+            _procesar_equivalencias_efg(equivalencias_file, persistir=True)
+            st.success("Base EFG guardada para próximos accesos.")
         except ValueError as error:
             _mostrar_error_procesamiento("No se pudo leer la base de equivalencias EFG.", error)
+
+    _mostrar_estado_maestro_persistente("efg", "Equivalencias EFG")
 
 
 def _render_base_maestra_laboratorios():
@@ -251,22 +355,11 @@ def _render_base_maestra_laboratorios():
                 ministerio_file = None
         if ministerio_file:
             try:
-                ministerio_df = maestro_laboratorios.leer_maestro_laboratorios(ministerio_file)
-                ministerio_df["fuente_maestro"] = "ministerio_facturacion"
-                if "tipo_producto" not in ministerio_df.columns:
-                    ministerio_df["tipo_producto"] = None
-                st.session_state["maestro_ministerio_df"] = ministerio_df
-                st.session_state["maestro_ministerio_nombre"] = "cargado"
-                if hasattr(ministerio_file, "seek"):
-                    ministerio_file.seek(0)
-                try:
-                    st.session_state["nomenclator_parafarmacia_financiada_df"] = normalizar_columnas_nomenclator(
-                        pd.read_excel(ministerio_file)
-                    )
-                except ValueError:
-                    st.session_state["nomenclator_parafarmacia_financiada_df"] = None
+                _procesar_maestro_ministerio(ministerio_file, persistir=True)
+                st.success("Nomenclátor del Ministerio guardado para próximos accesos.")
             except ValueError as error:
                 _mostrar_error_procesamiento("No se pudo leer el nomenclátor del Ministerio.", error)
+        _mostrar_estado_maestro_persistente("ministerio", "nomenclátor Ministerio")
 
     with col_manual:
         maestro_file = st.file_uploader(
@@ -284,12 +377,11 @@ def _render_base_maestra_laboratorios():
                 maestro_file = None
         if maestro_file:
             try:
-                maestro_df = maestro_laboratorios.leer_maestro_laboratorios(maestro_file)
-                maestro_df["fuente_maestro"] = "manual"
-                st.session_state["maestro_laboratorios_df"] = maestro_df
-                st.session_state["maestro_laboratorios_nombre"] = "cargado"
+                _procesar_maestro_manual(maestro_file, persistir=True)
+                st.success("Base manual guardada para próximos accesos.")
             except ValueError as error:
                 _mostrar_error_procesamiento("No se pudo leer la base maestra manual.", error)
+        _mostrar_estado_maestro_persistente("manual", "base manual")
 
     with col_aemps:
         nomenclator_file = st.file_uploader(
@@ -303,12 +395,19 @@ def _render_base_maestra_laboratorios():
         )
 
         if nomenclator_file:
+            if not _validar_archivo_subido(
+                nomenclator_file,
+                "Nomenclátor AEMPS",
+                extensiones=("zip", "xml"),
+            ):
+                nomenclator_file = None
+        if nomenclator_file:
             try:
-                nomenclator_df = nomenclator_aemps.leer_nomenclator_aemps(nomenclator_file)
-                st.session_state["maestro_medicamentos_aemps_df"] = nomenclator_df
-                st.session_state["maestro_medicamentos_aemps_nombre"] = "cargado"
+                _procesar_nomenclator_aemps(nomenclator_file, persistir=True)
+                st.success("Nomenclátor AEMPS guardado para próximos accesos.")
             except ValueError as error:
                 _mostrar_error_procesamiento("No se pudo leer el Nomenclátor AEMPS.", error)
+        _mostrar_estado_maestro_persistente("aemps", "nomenclátor AEMPS")
 
     ministerio_df = st.session_state.get("maestro_ministerio_df")
     manual_df = st.session_state.get("maestro_laboratorios_df")
@@ -2051,7 +2150,7 @@ def render_vida_pharma():
             df_faceta_bidafarma = pd.concat([df_faceta_bidafarma, df_faceta_lineas], ignore_index=True)
             df_faceta_bidafarma = df_faceta_bidafarma.drop_duplicates(subset=["concepto", "importe"], keep="last")
     _guardar_dataset("df_faceta_bidafarma", df_faceta_bidafarma)
-    condicion_detectada = condiciones_bidafarma.detectar_condicion(df, df_faceta_bidafarma)
+    condicion_detectada = condiciones_proveedor_b.detectar_condicion(df, df_faceta_bidafarma)
 
     # =========================
     # VISTAS

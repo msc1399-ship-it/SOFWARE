@@ -1,4 +1,5 @@
 .streamlit/secrets.toml
+data/base_maestra/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
