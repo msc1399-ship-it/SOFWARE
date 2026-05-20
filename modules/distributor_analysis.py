@@ -182,13 +182,22 @@ def _base_trabajo(df):
     trabajo["bruto_num"] = _serie_numerica(trabajo, "bruto")
     trabajo["neto_num"] = _serie_numerica(trabajo, "neto")
     trabajo["unidades_num"] = _serie_numerica(trabajo, "unidades")
+    trabajo["es_abono"] = trabajo["neto_num"].lt(0)
     return trabajo
+
+
+def _solo_compras(trabajo):
+    if trabajo is None or trabajo.empty:
+        return pd.DataFrame()
+    return trabajo[~trabajo["es_abono"]].copy()
 
 
 def calcular_volumen_compra(df):
     trabajo = _base_trabajo(df)
-    bruto_total = float(trabajo["bruto_num"].sum()) if not trabajo.empty else 0.0
-    neto_total = float(trabajo["neto_num"].sum()) if not trabajo.empty else 0.0
+    compras = _solo_compras(trabajo)
+    bruto_total = float(compras["bruto_num"].sum()) if not compras.empty else 0.0
+    neto_total = float(compras["neto_num"].sum()) if not compras.empty else 0.0
+    abonos_total = float(trabajo.loc[trabajo["es_abono"], "neto_num"].sum()) if not trabajo.empty else 0.0
     periodo = _periodo(df)
     meses = (periodo or {}).get("meses_equivalentes") or None
 
@@ -196,12 +205,14 @@ def calcular_volumen_compra(df):
         "periodo": periodo,
         "compra_total_periodo": round(bruto_total, 2),
         "compra_neta_periodo": round(neto_total, 2),
+        "abonos_totales": round(abonos_total, 2),
+        "total_neto_con_abonos": round(neto_total + abonos_total, 2),
         "compra_total_mensual": round(bruto_total / meses, 2) if meses else None,
-        "unidades_totales": round(float(trabajo["unidades_num"].sum()), 2) if not trabajo.empty else 0.0,
+        "unidades_totales": round(float(compras["unidades_num"].sum()), 2) if not compras.empty else 0.0,
     }
 
     for tipo in TIPOS_ANALISIS:
-        parte = trabajo[trabajo["bloque_analisis"].eq(tipo)] if not trabajo.empty else pd.DataFrame()
+        parte = compras[compras["bloque_analisis"].eq(tipo)] if not compras.empty else pd.DataFrame()
         bruto = float(parte["bruto_num"].sum()) if not parte.empty else 0.0
         volumen[tipo] = {
             "bruto": round(bruto, 2),
@@ -220,11 +231,12 @@ def calcular_desglose_por_tipo(
     analisis_transfer=None,
 ):
     trabajo = _base_trabajo(df)
+    compras = _solo_compras(trabajo)
     filas = []
-    bruto_total = float(trabajo["bruto_num"].sum()) if not trabajo.empty else 0.0
+    bruto_total = float(compras["bruto_num"].sum()) if not compras.empty else 0.0
 
     for tipo in TIPOS_ANALISIS:
-        parte = trabajo[trabajo["bloque_analisis"].eq(tipo)] if not trabajo.empty else pd.DataFrame()
+        parte = compras[compras["bloque_analisis"].eq(tipo)] if not compras.empty else pd.DataFrame()
         bruto = float(parte["bruto_num"].sum()) if not parte.empty else 0.0
         neto = float(parte["neto_num"].sum()) if not parte.empty else 0.0
         unidades = float(parte["unidades_num"].sum()) if not parte.empty else 0.0
@@ -331,8 +343,9 @@ def calcular_descuentos_reales(df, desglose=None, gastos_resumen=None):
 
     bruto_goteo = sum(float(_valor(bloque, "bruto") or 0) for bloque in ["especialidad", "parafarmacia"])
     coste_goteo = sum(float(_valor(bloque, "coste_ajustado") or 0) for bloque in ["especialidad", "parafarmacia"])
-    bruto_total = float(_serie_numerica(_base_trabajo(df), "bruto").sum())
-    coste_total = float(_serie_numerica(_base_trabajo(df), "neto").sum()) + float(gastos_resumen.get("total_gastos", 0) or 0)
+    compras = _solo_compras(_base_trabajo(df))
+    bruto_total = float(compras["bruto_num"].sum()) if not compras.empty else 0.0
+    coste_total = float(compras["neto_num"].sum()) + float(gastos_resumen.get("total_gastos", 0) or 0) if not compras.empty else 0.0
 
     aparente_goteo = _descuento_pct(
         bruto_goteo,
@@ -634,7 +647,8 @@ def generar_analisis_distribuidora(
         "periodo": volumen.get("periodo"),
         "compra_bruta_total": volumen.get("compra_total_periodo", 0),
         "compra_neta_total": volumen.get("compra_neta_periodo", 0),
-        "abonos_totales": 0.0,
+        "abonos_totales": volumen.get("abonos_totales", 0),
+        "total_neto_con_abonos": volumen.get("total_neto_con_abonos", 0),
         "unidades_totales": volumen.get("unidades_totales", 0),
         "descuento_medio_general": descuentos.get("descuento_total_general_pct"),
     }

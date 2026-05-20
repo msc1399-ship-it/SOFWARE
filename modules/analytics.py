@@ -65,6 +65,50 @@ def _columnas_albaran(df):
     return columnas
 
 
+def _columna_total_albaran(df):
+    for col in df.columns:
+        nombre = normalizar_nombre_columna(col)
+        if "albar" in nombre and any(token in nombre for token in ["total", "importe"]):
+            return col
+    return None
+
+
+def _numero_decimal(valor):
+    if pd.isna(valor):
+        return None
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        return float(valor)
+    texto = str(valor).replace("€", "").replace("EUR", "").replace(" ", "").strip()
+    if not texto:
+        return None
+    texto = re.sub(r"\.(?=\d{3}(?:\D|$))", "", texto)
+    texto = texto.replace(",", ".")
+    try:
+        return float(texto)
+    except ValueError:
+        return None
+
+
+def _sumar_total_albaranes_factura(df):
+    columnas_albaran = _columnas_albaran(df)
+    columna_total = _columna_total_albaran(df)
+    if not columnas_albaran or not columna_total:
+        return None
+
+    total = 0.0
+    encontrados = 0
+    for _, row in df.iterrows():
+        if not any(_parece_numero_albaran(extraer_numero_albaran(row.get(col))) for col in columnas_albaran):
+            continue
+        importe = _numero_decimal(row.get(columna_total))
+        if importe is None:
+            continue
+        total += importe
+        encontrados += 1
+
+    return round(total, 2) if encontrados else None
+
+
 def _extraer_albaranes_factura(df, tokens_fin_bloque):
     albaranes = []
     columnas = _columnas_albaran(df)
@@ -121,6 +165,7 @@ def analizar_factura_bidafarma(file):
         df,
         tokens_fin_bloque=["servicio", "gestion", "avantia", "ajuste comercial"],
     )
+    total_albaranes_factura = _sumar_total_albaranes_factura(df)
 
     for _, row in df.iterrows():
 
@@ -202,7 +247,8 @@ def analizar_factura_bidafarma(file):
             "base": round(total_gastos, 2),
             "iva": round(iva, 2),
             "total": round(total_final, 2)
-        }
+        },
+        "total_albaranes_factura": total_albaranes_factura,
     }
 
 
@@ -223,6 +269,7 @@ def analizar_factura_transfer(file):
         df,
         tokens_fin_bloque=["log", "abono", "laboratorio"],
     )
+    total_albaranes_factura = _sumar_total_albaranes_factura(df)
 
     for _, row in df.iterrows():
 
@@ -298,5 +345,6 @@ def analizar_factura_transfer(file):
             "base": round(base, 2),
             "iva": round(iva, 2),
             "total": round(total_final, 2)
-        }
+        },
+        "total_albaranes_factura": total_albaranes_factura,
     }

@@ -769,13 +769,14 @@ def _mostrar_analisis_distribuidora(analisis):
     descuento = resumen.get("descuento_medio_general")
     c4.metric("Desc. medio", "-" if descuento is None else f"{descuento:.2f}%")
 
-    g1, g2, g3, g4 = st.columns(4)
+    g1, g2, g3, g4, g5 = st.columns(5)
     volumen = analisis.get("volumen_compra", {})
     g1.metric("Compra mensual", "-" if volumen.get("compra_total_mensual") is None else f"{volumen.get('compra_total_mensual'):.2f} €")
-    g2.metric("% gastos/compra", f"{gastos_resumen.get('pct_gastos_sobre_compra', 0):.2f}%")
+    g2.metric("Abonos", f"{abs(float(resumen.get('abonos_totales', 0) or 0)):.2f} €")
+    g3.metric("% gastos/compra", f"{gastos_resumen.get('pct_gastos_sobre_compra', 0):.2f}%")
     descuentos = analisis.get("descuentos_reales", {})
-    g3.metric("Goteo aparente", "-" if descuentos.get("goteo_aparente_pct") is None else f"{descuentos.get('goteo_aparente_pct'):.2f}%")
-    g4.metric("Goteo real", "-" if descuentos.get("goteo_real_pct") is None else f"{descuentos.get('goteo_real_pct'):.2f}%")
+    g4.metric("Goteo aparente", "-" if descuentos.get("goteo_aparente_pct") is None else f"{descuentos.get('goteo_aparente_pct'):.2f}%")
+    g5.metric("Goteo real", "-" if descuentos.get("goteo_real_pct") is None else f"{descuentos.get('goteo_real_pct'):.2f}%")
 
     periodo = resumen.get("periodo")
     if periodo:
@@ -2310,6 +2311,10 @@ def render_vida_pharma():
                     st.error(f"Faltan: {faltan}")
                 if sobran:
                     st.warning(f"Sobran: {sobran}")
+
+            total_factura_albaranes = resultado.get("total_albaranes_factura")
+            if total_factura_albaranes is not None:
+                st.metric("Total albaranes factura", f"{total_factura_albaranes:.2f} €")
 
             st.subheader("💸 Gastos factura normal")
             st.dataframe(resultado["gastos"])
