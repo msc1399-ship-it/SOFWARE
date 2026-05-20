@@ -628,6 +628,7 @@ def generar_analisis_distribuidora(
         analisis_cargo_adicional=analisis_cargo_adicional,
         descuentos=descuentos,
     )
+    imputaciones_transfer = _df_seguro((analisis_transfer or {}).get("imputaciones_manuales"))
 
     resumen_compat = {
         "periodo": volumen.get("periodo"),
@@ -665,6 +666,7 @@ def generar_analisis_distribuidora(
         "top_impacto_mensaje": mensaje_top,
         "diagnostico": diagnostico,
         "clubes": analisis_clubes,
+        "imputaciones_transfer_manuales": imputaciones_transfer,
         "condiciones_comerciales": condiciones_comerciales,
         # Claves de compatibilidad con la UI/IA/resumen final actuales.
         "resumen": resumen_compat,

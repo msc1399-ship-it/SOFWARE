@@ -23,6 +23,7 @@ import modules.ai_advisor as ai_advisor
 import modules.club_analysis as club_analysis
 import modules.distributor_analysis as distributor_analysis
 import modules.parafarmacia as parafarmacia
+import modules.transfer_manual_mapping as transfer_manual_mapping
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -38,6 +39,7 @@ ai_advisor = importlib.reload(ai_advisor)
 club_analysis = importlib.reload(club_analysis)
 distributor_analysis = importlib.reload(distributor_analysis)
 parafarmacia = importlib.reload(parafarmacia)
+transfer_manual_mapping = importlib.reload(transfer_manual_mapping)
 
 try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
@@ -676,6 +678,11 @@ def _mostrar_analisis_distribuidora(analisis):
 
     _mostrar_analisis_clubes(analisis.get("clubes"))
 
+    imputaciones_transfer = analisis.get("imputaciones_transfer_manuales", pd.DataFrame())
+    if imputaciones_transfer is not None and not imputaciones_transfer.empty:
+        st.subheader("Imputaciones manuales de abonos transfer")
+        st.dataframe(imputaciones_transfer)
+
     _mostrar_condiciones_en_informe(analisis)
 
     top_impacto = analisis.get("top_impacto", pd.DataFrame())
@@ -932,10 +939,11 @@ def _detectar_laboratorios_bonificados(df_transfer, abonos_transfer):
 
     registros = []
     laboratorios_detectados_total = set()
-    for _, fila in abonos_transfer.iterrows():
+    for indice, fila in abonos_transfer.reset_index(drop=True).iterrows():
         concepto = str(fila.get("concepto", "")).strip()
         concepto_norm = _normalizar_texto_match(concepto)
         importe = float(fila.get("importe", 0) or 0)
+        id_abono = transfer_manual_mapping._id_abono(indice, concepto, importe)
 
         labs_detectados = []
         concepto_tokens = set(concepto_norm.split())
@@ -954,6 +962,7 @@ def _detectar_laboratorios_bonificados(df_transfer, abonos_transfer):
         laboratorios_detectados_total.update(labs_detectados)
         registros.append(
             {
+                "id_abono": id_abono,
                 "concepto": concepto,
                 "importe": round(importe, 2),
                 "laboratorios_detectados": " | ".join(labs_detectados),
@@ -966,7 +975,7 @@ def _detectar_laboratorios_bonificados(df_transfer, abonos_transfer):
     return {"laboratorios": laboratorios, "detalle": detalle}
 
 
-def _analisis_transfer_logistica(df_transfer, resultado_transfer):
+def _analisis_transfer_logistica(df_transfer, resultado_transfer, imputaciones_manuales=None):
     if df_transfer is None or df_transfer.empty or not resultado_transfer:
         return None
 
@@ -999,14 +1008,30 @@ def _analisis_transfer_logistica(df_transfer, resultado_transfer):
             .tolist()
         )
 
-    detalle["tiene_bonificacion_logistica"] = detalle["albaran"].astype(str).isin(albaranes_bonificados)
+    detalle["bonificado_transfer_auto"] = detalle["albaran"].astype(str).isin(albaranes_bonificados)
+    detalle = transfer_manual_mapping.aplicar_imputaciones_manuales_transfer(detalle, imputaciones_manuales)
+    detalle["bonificado_transfer_manual"] = detalle.get(
+        "bonificado_transfer_manual",
+        pd.Series(False, index=detalle.index),
+    ).fillna(False).astype(bool)
+    detalle["tiene_bonificacion_logistica"] = (
+        detalle["bonificado_transfer_auto"] | detalle["bonificado_transfer_manual"]
+    )
+    detalle["motivo_bonificacion_transfer"] = ""
+    detalle.loc[detalle["bonificado_transfer_auto"], "motivo_bonificacion_transfer"] = "auto_laboratorio"
+    detalle.loc[detalle["bonificado_transfer_manual"], "motivo_bonificacion_transfer"] = "manual"
+    detalle.loc[
+        detalle["bonificado_transfer_auto"] & detalle["bonificado_transfer_manual"],
+        "motivo_bonificacion_transfer",
+    ] = "auto_laboratorio + manual"
+    detalle["aplica_cargo_logistico_transfer"] = ~detalle["tiene_bonificacion_logistica"]
     detalle["cargo_transfer_base"] = 0.0
     detalle["cargo_transfer_iva"] = 0.0
     detalle["cargo_transfer_total"] = 0.0
     detalle["neto_con_cargo_transfer"] = detalle["neto"]
     detalle["abono_logistico_laboratorio"] = 0.0
 
-    mask_elegible = (detalle["neto"] > 0) & (~detalle["tiene_bonificacion_logistica"])
+    mask_elegible = (detalle["neto"] > 0) & (detalle["aplica_cargo_logistico_transfer"])
     if mask_elegible.any():
         detalle.loc[mask_elegible, "cargo_transfer_base"] = (
             detalle.loc[mask_elegible, "bruto"].abs() * 0.017
@@ -1052,6 +1077,9 @@ def _analisis_transfer_logistica(df_transfer, resultado_transfer):
         "resumen": {
             "laboratorios_bonificados": laboratorios_bonificados,
             "albaranes_bonificados": sorted(albaranes_bonificados),
+            "albaranes_bonificados_manual": sorted(
+                detalle.loc[detalle["bonificado_transfer_manual"], "albaran"].dropna().astype(str).unique().tolist()
+            ),
             "base_teorica_total": round(base_teorica, 2),
             "base_elegible": round(base_elegible, 2),
             "cargo_base_teorico": round(cargo_base_teorico, 2),
@@ -1064,7 +1092,79 @@ def _analisis_transfer_logistica(df_transfer, resultado_transfer):
             "diferencia_total": round(total_factura - cargo_total_teorico, 2),
             "lineas_elegibles": int(mask_elegible.sum()),
         },
+        "imputaciones_manuales": transfer_manual_mapping.generar_resumen_imputaciones_transfer(imputaciones_manuales),
     }
+
+
+def _render_imputacion_manual_transfer(df_transfer, resultado_transfer, asociaciones_auto):
+    pendientes = transfer_manual_mapping.detectar_abonos_transfer_no_asociados(
+        resultado_transfer,
+        asociaciones_auto=asociaciones_auto,
+    )
+    if not pendientes:
+        return st.session_state.get("imputaciones_transfer_manuales", [])
+
+    st.subheader("Abonos transfer pendientes de imputación manual")
+    if df_transfer is None or df_transfer.empty:
+        st.warning("Hay abonos transfer pendientes, pero no hay albaranes transfer cargados para imputarlos.")
+        return st.session_state.get("imputaciones_transfer_manuales", [])
+
+    selector = transfer_manual_mapping.preparar_albaranes_transfer_para_selector(df_transfer)
+    if selector.empty:
+        st.warning("No se han encontrado albaranes transfer válidos para la imputación manual.")
+        return st.session_state.get("imputaciones_transfer_manuales", [])
+
+    imputaciones = list(st.session_state.get("imputaciones_transfer_manuales", []))
+    imputaciones_por_id = {imp.get("id_abono"): imp for imp in imputaciones}
+    etiquetas = dict(zip(selector["albaran"], selector["etiqueta"]))
+    opciones = selector["albaran"].astype(str).tolist()
+
+    for abono in pendientes:
+        id_abono = abono["id_abono"]
+        existente = imputaciones_por_id.get(id_abono, {})
+        with st.expander(f"Abono: {abono['concepto']} · {abono['importe_abono']:.2f} €", expanded=True):
+            seleccion = st.multiselect(
+                "Selecciona albaranes afectados",
+                options=opciones,
+                default=[alb for alb in existente.get("albaranes_asociados", []) if alb in opciones],
+                format_func=lambda alb: etiquetas.get(alb, str(alb)),
+                key=f"transfer_manual_{id_abono}",
+            )
+
+            validacion = transfer_manual_mapping.calcular_validacion_abono_manual(
+                abono["importe_abono"],
+                seleccion,
+                df_transfer,
+            )
+
+            v1, v2, v3, v4 = st.columns(4)
+            v1.metric("Base seleccionada", f"{validacion['base_manual']:.2f} €")
+            v2.metric("Cargo teórico 1,7%", f"{validacion['cargo_teorico_1_7']:.2f} €")
+            v3.metric("Importe abono", f"{validacion['importe_abono']:.2f} €")
+            v4.metric("Diferencia", f"{validacion['diferencia']:.2f} €")
+
+            if validacion["usa_neto_fallback"]:
+                st.warning("Algún albarán no tiene bruto válido; se ha usado neto como base de respaldo.")
+
+            if validacion["estado_validacion"] == "cuadra":
+                st.success("El abono coincide con el 1,7% de los albaranes seleccionados.")
+            else:
+                st.warning("El abono no coincide exactamente con el 1,7% de los albaranes seleccionados.")
+
+            if st.button("Confirmar imputación manual", key=f"confirmar_transfer_manual_{id_abono}"):
+                nueva = {
+                    **abono,
+                    "estado_asociacion": "asociado_manual",
+                    "albaranes_asociados": seleccion,
+                    **validacion,
+                }
+                imputaciones = [imp for imp in imputaciones if imp.get("id_abono") != id_abono]
+                imputaciones.append(nueva)
+                st.session_state["imputaciones_transfer_manuales"] = imputaciones
+                st.success("Imputación manual guardada temporalmente.")
+                st.rerun()
+
+    return st.session_state.get("imputaciones_transfer_manuales", [])
 
 
 def _lineas_elegibles_goteo_puro(df):
@@ -2441,7 +2541,21 @@ def render_vida_pharma():
                 col2.metric("IVA (21%)", f"{resumen['iva']} €")
                 col3.metric("TOTAL", f"{resumen['total']} €")
 
-            analisis_transfer = _analisis_transfer_logistica(df_transfer, resultado_transfer)
+            asociaciones_auto_transfer = _detectar_laboratorios_bonificados(
+                df_transfer,
+                resultado_transfer.get("abonos", pd.DataFrame()),
+            )["detalle"]
+            imputaciones_transfer_manuales = _render_imputacion_manual_transfer(
+                df_transfer,
+                resultado_transfer,
+                asociaciones_auto_transfer,
+            )
+
+            analisis_transfer = _analisis_transfer_logistica(
+                df_transfer,
+                resultado_transfer,
+                imputaciones_manuales=imputaciones_transfer_manuales,
+            )
             if analisis_transfer:
                 resumen_transfer = analisis_transfer["resumen"]
 
@@ -2471,6 +2585,12 @@ def render_vida_pharma():
                         + ", ".join(map(str, resumen_transfer["albaranes_bonificados"]))
                     )
 
+                if resumen_transfer.get("albaranes_bonificados_manual"):
+                    st.caption(
+                        "Albaranes sin cargo por imputación manual: "
+                        + ", ".join(map(str, resumen_transfer["albaranes_bonificados_manual"]))
+                    )
+
                 if abs(resumen_transfer["diferencia_total"]) <= 0.05:
                     st.success(
                         "El cargo teórico de transfer, incluyendo IVA, cuadra con la factura."
@@ -2486,6 +2606,10 @@ def render_vida_pharma():
                     st.caption("Abonos de factura y laboratorios detectados")
                     st.dataframe(analisis_transfer["abonos_detectados"])
 
+                if not analisis_transfer["imputaciones_manuales"].empty:
+                    st.caption("Imputaciones manuales de abonos transfer")
+                    st.dataframe(analisis_transfer["imputaciones_manuales"])
+
                 st.caption(
                     "Detalle de líneas transfer: solo se aplica cargo al transfer real, "
                     "sin abonos y excluyendo albaranes bonificados."
@@ -2500,7 +2624,10 @@ def render_vida_pharma():
                                 "laboratorio_maestro",
                                 "bruto",
                                 "neto",
-                                "tiene_bonificacion_logistica",
+                                "bonificado_transfer_auto",
+                                "bonificado_transfer_manual",
+                                "motivo_bonificacion_transfer",
+                                "aplica_cargo_logistico_transfer",
                                 "abono_logistico_laboratorio",
                                 "cargo_transfer_base",
                                 "cargo_transfer_iva",
