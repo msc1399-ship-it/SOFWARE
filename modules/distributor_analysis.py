@@ -1,6 +1,6 @@
 import pandas as pd
 
-from modules import faceta, parafarmacia
+from modules import club_analysis, faceta, parafarmacia
 
 
 TIPOS_ANALISIS = [
@@ -634,6 +634,12 @@ def generar_analisis_distribuidora(
         df_compras=df,
     )
     descuentos = calcular_descuentos_reales(df, desglose=desglose, gastos_resumen=gastos_resumen)
+    if analisis_clubes is None:
+        analisis_clubes = club_analysis.analizar_clubes(
+            df,
+            proveedor=proveedor_detectado or proveedor,
+            descuento_goteo_real=descuentos.get("goteo_real_pct"),
+        )
     especialidad_cara = calcular_especialidad_cara(df)
     parafarmacia_financiada = calcular_parafarmacia_financiada(df)
     operativa = calcular_operativa_proveedor(df)
