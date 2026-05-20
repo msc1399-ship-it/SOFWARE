@@ -7,6 +7,7 @@ import unicodedata
 from modules.ingestion import load_excel
 from modules.parser import parse_sections
 from modules.classification import normalize_columns, clasificar_especialidad_cara
+from modules.parafarmacia import detectar_parafarmacia_financiada, normalizar_columnas_nomenclator
 from modules.analytics import analizar_factura_bidafarma, analizar_factura_transfer
 import modules.bitransfer as bitransfer
 import modules.servicios as servicios
@@ -21,6 +22,7 @@ import modules.equivalencias_efg as equivalencias_efg
 import modules.ai_advisor as ai_advisor
 import modules.club_analysis as club_analysis
 import modules.distributor_analysis as distributor_analysis
+import modules.parafarmacia as parafarmacia
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -35,6 +37,7 @@ equivalencias_efg = importlib.reload(equivalencias_efg)
 ai_advisor = importlib.reload(ai_advisor)
 club_analysis = importlib.reload(club_analysis)
 distributor_analysis = importlib.reload(distributor_analysis)
+parafarmacia = importlib.reload(parafarmacia)
 
 try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
@@ -132,6 +135,58 @@ def _filtrar_archivos_validos(uploaded_files, etiqueta="archivo", extensiones=("
         for uploaded_file in uploaded_files
         if _validar_archivo_subido(uploaded_file, etiqueta, extensiones=extensiones, max_mb=max_mb)
     ]
+
+
+def _render_nomenclator_parafarmacia():
+    with st.expander("Nomenclátor / base CN financiados", expanded=False):
+        archivo = st.file_uploader(
+            "Sube nomenclátor / base CN financiados",
+            type=["xlsx"],
+            key="nomenclator_parafarmacia_financiada",
+        )
+
+        if archivo and not _validar_archivo_subido(archivo, "Nomenclátor parafarmacia financiada"):
+            archivo = None
+
+        if not archivo:
+            st.info(
+                "No se ha subido nomenclátor. No se marcará parafarmacia financiada; "
+                "las líneas IVA 10 quedarán como parafarmacia no financiada salvo cruce con nomenclátor."
+            )
+            st.session_state["nomenclator_parafarmacia_financiada"] = None
+            return None
+
+        try:
+            df_nomenclator = normalizar_columnas_nomenclator(pd.read_excel(archivo))
+            st.session_state["nomenclator_parafarmacia_financiada"] = df_nomenclator
+            st.success(f"Nomenclátor cargado: {len(df_nomenclator)} códigos normalizados.")
+            return df_nomenclator
+        except ValueError as error:
+            _mostrar_error_procesamiento("No se pudo leer el nomenclátor de CN financiados.", error)
+            st.session_state["nomenclator_parafarmacia_financiada"] = None
+            return None
+
+
+def _aplicar_clasificaciones_transversales(df, df_nomenclator=None):
+    df = clasificar_especialidad_cara(df)
+    return detectar_parafarmacia_financiada(df, df_nomenclator=df_nomenclator)
+
+
+def _mostrar_tarjeta_parafarmacia_financiada(df):
+    if df is None or df.empty or "es_parafarmacia_financiada" not in df.columns:
+        return
+
+    mask = df["es_parafarmacia_financiada"].fillna(False).astype(bool)
+    if not mask.any():
+        return
+
+    parte = df[mask].copy()
+    bruto = pd.to_numeric(parte.get("bruto", 0), errors="coerce").fillna(0).sum()
+    neto = pd.to_numeric(parte.get("neto", 0), errors="coerce").fillna(0).sum()
+    st.success(
+        "Parafarmacia financiada detectada · "
+        f"Líneas: {int(mask.sum())} · Bruto: {bruto:.2f} € · Neto: {neto:.2f} €"
+    )
 
 
 def _asegurar_maestros_en_sesion():
@@ -383,7 +438,10 @@ def _leer_albaranes_genericos(uploaded_files, proveedor, tipo_compra):
 
         df_temp = parse_sections(df_temp)
         df_temp = _enriquecer_con_maestro(df_temp)
-        df_temp = clasificar_especialidad_cara(df_temp)
+        df_temp = _aplicar_clasificaciones_transversales(
+            df_temp,
+            st.session_state.get("nomenclator_parafarmacia_financiada"),
+        )
         dfs.append(df_temp)
 
     return dfs
@@ -581,6 +639,35 @@ def _mostrar_analisis_distribuidora(analisis):
             "base_iva4_especialidad_cara": especialidad_cara_resumen.get("base_iva4_especialidad_cara", 0),
             "base_iva4_sujeta_ajuste": especialidad_cara_resumen.get("base_iva4_sujeta_ajuste", 0),
         }]))
+
+    parafarmacia_financiada = analisis.get("parafarmacia_financiada", {}) or {}
+    resumen_para_fin = parafarmacia_financiada.get("resumen", {})
+    if resumen_para_fin and resumen_para_fin.get("lineas_detectadas", 0) > 0:
+        st.subheader("Parafarmacia financiada")
+        pf1, pf2, pf3, pf4 = st.columns(4)
+        pf1.metric("Líneas", resumen_para_fin.get("lineas_detectadas", 0))
+        pf2.metric("Unidades", f"{resumen_para_fin.get('unidades', 0):.2f}")
+        pf3.metric("Bruto total", f"{resumen_para_fin.get('bruto_total', 0):.2f} €")
+        pf4.metric("Neto total", f"{resumen_para_fin.get('neto_total', 0):.2f} €")
+        pf5, pf6, pf7, pf8 = st.columns(4)
+        pf5.metric("Descuento total", f"{resumen_para_fin.get('descuento_total_euros', 0):.2f} €")
+        pf6.metric("Desc. medio", f"{resumen_para_fin.get('descuento_medio_euros', 0):.2f} €")
+        pf7.metric("% compra total", f"{resumen_para_fin.get('porcentaje_sobre_compra_total', 0):.2f}%")
+        pf8.metric("% parafarmacia", f"{resumen_para_fin.get('porcentaje_sobre_parafarmacia_total', 0):.2f}%")
+        st.dataframe(pd.DataFrame([{
+            "base_parafarmacia_total": resumen_para_fin.get("base_parafarmacia_total", 0),
+            "base_parafarmacia_financiada": resumen_para_fin.get("base_parafarmacia_financiada", 0),
+            "base_parafarmacia_no_financiada": resumen_para_fin.get("base_parafarmacia_no_financiada", 0),
+            "base_parafarmacia_sujeta_condiciones": resumen_para_fin.get("base_parafarmacia_sujeta_condiciones", 0),
+        }]))
+        top_labs = parafarmacia_financiada.get("top_laboratorios", pd.DataFrame())
+        if top_labs is not None and not top_labs.empty:
+            st.caption("Top laboratorios parafarmacia financiada")
+            st.dataframe(top_labs)
+        top_cn = parafarmacia_financiada.get("top_cn", pd.DataFrame())
+        if top_cn is not None and not top_cn.empty:
+            st.caption("Top CN parafarmacia financiada")
+            st.dataframe(top_cn)
 
     operativa = analisis.get("operativa_proveedor", {})
     if operativa:
@@ -994,11 +1081,16 @@ def _lineas_elegibles_goteo_puro(df):
         "es_especialidad_cara",
         pd.Series(False, index=detalle.index),
     ).fillna(False).astype(bool)
+    no_parafarmacia_financiada = ~detalle.get(
+        "es_parafarmacia_financiada",
+        pd.Series(False, index=detalle.index),
+    ).fillna(False).astype(bool)
 
     mask = (
         detalle["tipo_compra"].eq("goteo")
         & detalle["seccion_albaran"].isin(["especialidad", "parafarmacia"])
         & no_especialidad_cara
+        & no_parafarmacia_financiada
         & ~detalle["neto"].lt(0)
         & ~descripcion_norm.str.contains("club", na=False)
         & ~descripcion_norm.str.contains("avantia", na=False)
@@ -1166,6 +1258,10 @@ def _resumen_bidafarma(
         "es_especialidad_cara",
         pd.Series(False, index=lineas_resumen.index),
     ).fillna(False).astype(bool)
+    mask_parafarmacia_financiada = lineas_resumen.get(
+        "es_parafarmacia_financiada",
+        pd.Series(False, index=lineas_resumen.index),
+    ).fillna(False).astype(bool)
     mask_goteo_puro = (
         tipo_compra_norm.eq("goteo")
         & seccion_norm.isin(["especialidad", "parafarmacia"])
@@ -1173,6 +1269,7 @@ def _resumen_bidafarma(
         & ~mask_club
         & ~mask_avantia
         & ~mask_especialidad_cara
+        & ~mask_parafarmacia_financiada
     )
     mask_especialidad_normal = (
         mask_goteo_puro
@@ -1240,6 +1337,34 @@ def _resumen_bidafarma(
             "descuento_medio_euros": descuento_medio,
         }
 
+    def agregar_bloque_parafarmacia_financiada():
+        bloque = lineas_resumen[mask_parafarmacia_financiada].copy()
+        if bloque.empty:
+            return None
+
+        bruto = _sumar_columna_real(bloque, "bruto")
+        neto = _sumar_columna_real(bloque, "neto")
+        unidades = _sumar_columna_real(bloque, "unidades")
+        descuento_total = _sumar_columna_real(bloque, "descuento_parafarmacia_financiada_euros")
+        descuento_medio = descuento_total / unidades if unidades else 0.0
+        resumen_bloques.append({
+            "bloque": "Parafarmacia financiada",
+            "lineas": len(bloque),
+            "unidades": round(unidades, 2),
+            "bruto_compra": round(bruto, 2),
+            "neto_inicial": round(neto, 2),
+            "coste_ajustado": round(neto, 2),
+            "descuento_medio_pct": _descuento_pct(bruto, neto),
+            "descuento_total_euros": round(descuento_total, 2),
+            "descuento_medio_euros": round(descuento_medio, 2),
+        })
+        return {
+            "bruto": bruto,
+            "neto": neto,
+            "coste": neto,
+            "descuento_medio_euros": descuento_medio,
+        }
+
     bloque_goteo_puro = agregar_bloque(
         "Goteo puro",
         mask_goteo_puro,
@@ -1267,6 +1392,7 @@ def _resumen_bidafarma(
         ),
     )
     bloque_especialidad_cara = agregar_bloque_especialidad_cara()
+    bloque_parafarmacia_financiada = agregar_bloque_parafarmacia_financiada()
     bloque_parafarmacia = agregar_bloque(
         "Parafarmacia normal",
         mask_goteo_puro & seccion_norm.eq("parafarmacia"),
@@ -1382,6 +1508,7 @@ def _render_subida_albaranes_base(nombre_proveedor, proveedor_id):
     df = pd.concat(dfs, ignore_index=True) if dfs else None
     _guardar_dataset(f"df_{proveedor_id}", df)
     _mostrar_vistas_albaranes(df)
+    _mostrar_tarjeta_parafarmacia_financiada(df)
 
     return df
 
@@ -1800,7 +1927,10 @@ def render_vida_pharma():
 
             df_temp = parse_sections(df_temp)
             df_temp = _enriquecer_con_maestro(df_temp)
-            df_temp = clasificar_especialidad_cara(df_temp)
+            df_temp = _aplicar_clasificaciones_transversales(
+                df_temp,
+                st.session_state.get("nomenclator_parafarmacia_financiada"),
+            )
             dfs.append(df_temp)
 
     # TRANSFER
@@ -1819,7 +1949,10 @@ def render_vida_pharma():
 
             df_temp = parse_sections(df_temp)
             df_temp = _enriquecer_con_maestro(df_temp)
-            df_temp = clasificar_especialidad_cara(df_temp)
+            df_temp = _aplicar_clasificaciones_transversales(
+                df_temp,
+                st.session_state.get("nomenclator_parafarmacia_financiada"),
+            )
             dfs.append(df_temp)
 
     if dfs:
@@ -1841,6 +1974,7 @@ def render_vida_pharma():
 
     if df is not None:
         _mostrar_vistas_albaranes(df)
+        _mostrar_tarjeta_parafarmacia_financiada(df)
 
     if not df_faceta_bidafarma.empty:
         analisis_faceta = faceta.analizar_faceta_v(df, df_faceta_bidafarma) if df is not None else None
@@ -2550,6 +2684,8 @@ if st.button("Borrar datos cargados"):
 
 with st.expander("Base maestra CN / laboratorio", expanded=False):
     _render_base_maestra_laboratorios()
+
+_render_nomenclator_parafarmacia()
 
 with st.expander("Contexto de farmacia", expanded=False):
     render_contexto_farmacia()

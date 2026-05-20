@@ -1,12 +1,13 @@
 import pandas as pd
 
-from modules import faceta
+from modules import faceta, parafarmacia
 
 
 TIPOS_ANALISIS = [
     "goteo_puro",
     "especialidad",
     "especialidad_cara",
+    "parafarmacia_financiada",
     "parafarmacia",
     "transfer",
     "bitransfer",
@@ -95,6 +96,10 @@ def _clasificar_bloques(df):
     tipo_compra = df.get("tipo_compra", pd.Series("", index=df.index)).astype(str).str.lower().str.strip()
     descripcion = df.get("descripcion", pd.Series("", index=df.index)).astype(str).str.lower()
     especialidad_cara = df.get("es_especialidad_cara", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    parafarmacia_financiada = df.get(
+        "es_parafarmacia_financiada",
+        pd.Series(False, index=df.index),
+    ).fillna(False).astype(bool)
 
     bloque = pd.Series("otros", index=df.index, dtype="object")
     bloque[tipo_compra.eq("transfer")] = "transfer"
@@ -106,17 +111,20 @@ def _clasificar_bloques(df):
     bloque[tipo_compra.eq("goteo") & seccion.eq("especialidad")] = "especialidad"
     bloque[tipo_compra.eq("goteo") & seccion.eq("parafarmacia")] = "parafarmacia"
     bloque[especialidad_cara] = "especialidad_cara"
+    bloque[parafarmacia_financiada] = "parafarmacia_financiada"
 
     goteo = (
         tipo_compra.eq("goteo")
         & seccion.isin(["especialidad", "parafarmacia"])
         & ~especialidad_cara
+        & ~parafarmacia_financiada
         & ~seccion.isin(["club", "avantia", "bitransfer"])
         & ~descripcion.str.contains("club|avantia|bitransfer|bittransfer|nexo|plataforma", na=False)
     )
     bloque[goteo] = "goteo_puro"
     bloque[goteo & seccion.eq("especialidad")] = "especialidad"
     bloque[goteo & seccion.eq("parafarmacia")] = "parafarmacia"
+    bloque[parafarmacia_financiada] = "parafarmacia_financiada"
     return bloque
 
 
@@ -222,7 +230,12 @@ def calcular_desglose_por_tipo(
         unidades = float(parte["unidades_num"].sum()) if not parte.empty else 0.0
         cargos = _cargo_extra_por_bloque(tipo, analisis_faceta, analisis_avantia, resumen_bitransfer, analisis_transfer)
         coste_real = neto + cargos
-        descuento_euros = float(_serie_numerica(parte, "descuento_especialidad_cara_euros").sum()) if not parte.empty else 0.0
+        descuento_euros = 0.0
+        if not parte.empty and tipo == "especialidad_cara":
+            descuento_euros = float(_serie_numerica(parte, "descuento_especialidad_cara_euros").sum())
+        if not parte.empty and tipo == "parafarmacia_financiada":
+            descuento_euros = float(_serie_numerica(parte, "descuento_parafarmacia_financiada_euros").sum())
+        descuento_en_euros = tipo in ["especialidad_cara", "parafarmacia_financiada"]
         filas.append({
             "bloque": tipo,
             "lineas": int(len(parte)),
@@ -231,11 +244,12 @@ def calcular_desglose_por_tipo(
             "neto": round(neto, 2),
             "coste_ajustado": round(coste_real, 2),
             "porcentaje_compra": round((bruto / bruto_total * 100), 2) if bruto_total else 0.0,
-            "descuento_aparente_pct": None if tipo == "especialidad_cara" else _descuento_pct(bruto, neto),
+            "descuento_aparente_pct": None if descuento_en_euros else _descuento_pct(bruto, neto),
             "descuento_especialidad_cara_euros": round(descuento_euros, 2) if tipo == "especialidad_cara" else None,
-            "descuento_medio_euros": round(descuento_euros / unidades, 2) if tipo == "especialidad_cara" and unidades else None,
+            "descuento_parafarmacia_financiada_euros": round(descuento_euros, 2) if tipo == "parafarmacia_financiada" else None,
+            "descuento_medio_euros": round(descuento_euros / unidades, 2) if descuento_en_euros and unidades else None,
             "cargos_imputados": round(cargos, 2),
-            "descuento_real_final_pct": None if tipo == "especialidad_cara" else _descuento_pct(bruto, coste_real),
+            "descuento_real_final_pct": None if descuento_en_euros else _descuento_pct(bruto, coste_real),
         })
     return pd.DataFrame(filas)
 
@@ -400,6 +414,10 @@ def calcular_especialidad_cara(df):
         "base_iva4_especialidad_cara": round(base_iva4_cara, 2),
         "base_iva4_sujeta_ajuste": round(base_iva4_total - base_iva4_cara, 2),
     }
+
+
+def calcular_parafarmacia_financiada(df):
+    return parafarmacia.calcular_resumen_parafarmacia_financiada(df)
 
 
 def calcular_top_articulos_impactados(df, limite=10):
@@ -595,9 +613,14 @@ def generar_analisis_distribuidora(
     )
     descuentos = calcular_descuentos_reales(df, desglose=desglose, gastos_resumen=gastos_resumen)
     especialidad_cara = calcular_especialidad_cara(df)
+    parafarmacia_financiada = calcular_parafarmacia_financiada(df)
     operativa = calcular_operativa_proveedor(df)
     top_impacto, mensaje_top = calcular_top_articulos_impactados(df)
     diagnostico = generar_diagnostico(volumen, descuentos, gastos_resumen, especialidad_cara, top_impacto, mensaje_top)
+    if parafarmacia_financiada.get("resumen", {}).get("lineas_detectadas", 0) > 0:
+        diagnostico.setdefault("oportunidades", []).append(
+            "Separar parafarmacia financiada de las condiciones comerciales generales y revisar volumen por laboratorio."
+        )
     condiciones_comerciales = calcular_condiciones_comerciales(
         condicion_detectada=condicion_detectada,
         analisis_faceta=analisis_faceta,
@@ -636,6 +659,7 @@ def generar_analisis_distribuidora(
         "gastos_ocultos": gastos,
         "gastos_resumen": gastos_resumen,
         "especialidad_cara_resumen": especialidad_cara,
+        "parafarmacia_financiada": parafarmacia_financiada,
         "operativa_proveedor": operativa,
         "top_impacto": top_impacto,
         "top_impacto_mensaje": mensaje_top,
