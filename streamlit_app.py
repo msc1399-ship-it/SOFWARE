@@ -139,36 +139,6 @@ def _filtrar_archivos_validos(uploaded_files, etiqueta="archivo", extensiones=("
     ]
 
 
-def _render_nomenclator_parafarmacia():
-    with st.expander("Nomenclátor / base CN financiados", expanded=False):
-        archivo = st.file_uploader(
-            "Sube nomenclátor / base CN financiados",
-            type=["xlsx"],
-            key="nomenclator_parafarmacia_financiada",
-        )
-
-        if archivo and not _validar_archivo_subido(archivo, "Nomenclátor parafarmacia financiada"):
-            archivo = None
-
-        if not archivo:
-            st.info(
-                "No se ha subido nomenclátor. No se marcará parafarmacia financiada; "
-                "las líneas IVA 10 quedarán como parafarmacia no financiada salvo cruce con nomenclátor."
-            )
-            st.session_state["nomenclator_parafarmacia_financiada"] = None
-            return None
-
-        try:
-            df_nomenclator = normalizar_columnas_nomenclator(pd.read_excel(archivo))
-            st.session_state["nomenclator_parafarmacia_financiada"] = df_nomenclator
-            st.success(f"Nomenclátor cargado: {len(df_nomenclator)} códigos normalizados.")
-            return df_nomenclator
-        except ValueError as error:
-            _mostrar_error_procesamiento("No se pudo leer el nomenclátor de CN financiados.", error)
-            st.session_state["nomenclator_parafarmacia_financiada"] = None
-            return None
-
-
 def _aplicar_clasificaciones_transversales(df, df_nomenclator=None):
     df = clasificar_especialidad_cara(df)
     return detectar_parafarmacia_financiada(df, df_nomenclator=df_nomenclator)
@@ -287,6 +257,14 @@ def _render_base_maestra_laboratorios():
                     ministerio_df["tipo_producto"] = None
                 st.session_state["maestro_ministerio_df"] = ministerio_df
                 st.session_state["maestro_ministerio_nombre"] = "cargado"
+                if hasattr(ministerio_file, "seek"):
+                    ministerio_file.seek(0)
+                try:
+                    st.session_state["nomenclator_parafarmacia_financiada_df"] = normalizar_columnas_nomenclator(
+                        pd.read_excel(ministerio_file)
+                    )
+                except ValueError:
+                    st.session_state["nomenclator_parafarmacia_financiada_df"] = None
             except ValueError as error:
                 _mostrar_error_procesamiento("No se pudo leer el nomenclátor del Ministerio.", error)
 
@@ -442,7 +420,7 @@ def _leer_albaranes_genericos(uploaded_files, proveedor, tipo_compra):
         df_temp = _enriquecer_con_maestro(df_temp)
         df_temp = _aplicar_clasificaciones_transversales(
             df_temp,
-            st.session_state.get("nomenclator_parafarmacia_financiada"),
+            st.session_state.get("nomenclator_parafarmacia_financiada_df"),
         )
         dfs.append(df_temp)
 
@@ -2029,7 +2007,7 @@ def render_vida_pharma():
             df_temp = _enriquecer_con_maestro(df_temp)
             df_temp = _aplicar_clasificaciones_transversales(
                 df_temp,
-                st.session_state.get("nomenclator_parafarmacia_financiada"),
+                st.session_state.get("nomenclator_parafarmacia_financiada_df"),
             )
             dfs.append(df_temp)
 
@@ -2051,7 +2029,7 @@ def render_vida_pharma():
             df_temp = _enriquecer_con_maestro(df_temp)
             df_temp = _aplicar_clasificaciones_transversales(
                 df_temp,
-                st.session_state.get("nomenclator_parafarmacia_financiada"),
+                st.session_state.get("nomenclator_parafarmacia_financiada_df"),
             )
             dfs.append(df_temp)
 
@@ -2811,8 +2789,6 @@ if st.button("Borrar datos cargados"):
 
 with st.expander("Base maestra CN / laboratorio", expanded=False):
     _render_base_maestra_laboratorios()
-
-_render_nomenclator_parafarmacia()
 
 with st.expander("Contexto de farmacia", expanded=False):
     render_contexto_farmacia()
