@@ -38,7 +38,10 @@ def normalizar_cn(valor):
     if pd.isna(valor):
         return None
 
-    texto = re.sub(r"\D", "", str(valor))
+    texto_original = str(valor).strip()
+    if re.match(r"^\d+\.0$", texto_original):
+        texto_original = texto_original[:-2]
+    texto = re.sub(r"\D", "", texto_original)
     return texto or None
 
 
@@ -110,10 +113,16 @@ def enriquecer_con_laboratorio(df, maestro_df):
     if "fuente_maestro" in maestro_df.columns:
         columnas_merge.append("fuente_maestro")
 
-    resultado = resultado.merge(
-        maestro_df[columnas_merge],
-        on="cn",
-        how="left",
+    columnas_existentes = [col for col in columnas_merge if col in resultado.columns and col != "cn"]
+    if columnas_existentes:
+        resultado = resultado.drop(columns=columnas_existentes)
+
+    maestro_lookup = (
+        maestro_df[columnas_merge]
+        .dropna(subset=["cn"])
+        .drop_duplicates(subset=["cn"], keep="first")
+        .set_index("cn")
     )
+    resultado = resultado.join(maestro_lookup, on="cn")
 
     return resultado

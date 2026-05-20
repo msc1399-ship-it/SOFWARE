@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import importlib
 import unicodedata
+import io
 
 from modules.ingestion import load_excel
 from modules.parser import parse_sections
@@ -94,6 +95,17 @@ def normalizar_albaran(valor):
     return re.sub(r"\D", "", texto) or texto
 
 
+def _normalizar_nombre_columna(columna):
+    texto = str(columna).lower().strip()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _buscar_columna_albaran(columnas):
+    return next((col for col in columnas if "albar" in _normalizar_nombre_columna(col)), None)
+
+
 def _guardar_dataset(clave, df):
     st.session_state[clave] = df
 
@@ -177,8 +189,58 @@ def _mostrar_tarjeta_parafarmacia_financiada(df):
     )
 
 
+def _archivo_a_bytes(uploaded_file):
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+    contenido = uploaded_file.getvalue() if hasattr(uploaded_file, "getvalue") else uploaded_file.read()
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+    nombre = str(getattr(uploaded_file, "name", "archivo"))
+    return contenido, nombre
+
+
+def _archivo_desde_bytes(contenido, nombre):
+    archivo = io.BytesIO(contenido)
+    archivo.name = nombre
+    archivo.size = len(contenido)
+    return archivo
+
+
+@st.cache_data(show_spinner=False)
+def _leer_equivalencias_efg_cache(contenido, nombre):
+    return equivalencias_efg.leer_base_equivalencias_efg(_archivo_desde_bytes(contenido, nombre))
+
+
+@st.cache_data(show_spinner=False)
+def _leer_maestro_ministerio_cache(contenido, nombre):
+    archivo = _archivo_desde_bytes(contenido, nombre)
+    ministerio_df = maestro_laboratorios.leer_maestro_laboratorios(archivo)
+    ministerio_df["fuente_maestro"] = "ministerio_facturacion"
+    if "tipo_producto" not in ministerio_df.columns:
+        ministerio_df["tipo_producto"] = None
+    archivo.seek(0)
+    try:
+        nomenclator_df = normalizar_columnas_nomenclator(pd.read_excel(archivo))
+    except ValueError:
+        nomenclator_df = None
+    return ministerio_df, nomenclator_df
+
+
+@st.cache_data(show_spinner=False)
+def _leer_maestro_manual_cache(contenido, nombre):
+    maestro_df = maestro_laboratorios.leer_maestro_laboratorios(_archivo_desde_bytes(contenido, nombre))
+    maestro_df["fuente_maestro"] = "manual"
+    return maestro_df
+
+
+@st.cache_data(show_spinner=False)
+def _leer_nomenclator_aemps_cache(contenido, nombre):
+    return nomenclator_aemps.leer_nomenclator_aemps(_archivo_desde_bytes(contenido, nombre))
+
+
 def _procesar_equivalencias_efg(equivalencias_file, persistir=False):
-    efg_data = equivalencias_efg.leer_base_equivalencias_efg(equivalencias_file)
+    contenido, nombre = _archivo_a_bytes(equivalencias_file)
+    efg_data = _leer_equivalencias_efg_cache(contenido, nombre)
     st.session_state["tabla_equivalencias_efg"] = efg_data["tabla_equivalencias_efg"]
     st.session_state["grupos_homogeneos_efg"] = efg_data["grupos_homogeneos"]
     st.session_state["opciones_por_grupo_efg"] = efg_data["opciones_por_grupo"]
@@ -189,27 +251,18 @@ def _procesar_equivalencias_efg(equivalencias_file, persistir=False):
 
 
 def _procesar_maestro_ministerio(ministerio_file, persistir=False):
-    ministerio_df = maestro_laboratorios.leer_maestro_laboratorios(ministerio_file)
-    ministerio_df["fuente_maestro"] = "ministerio_facturacion"
-    if "tipo_producto" not in ministerio_df.columns:
-        ministerio_df["tipo_producto"] = None
+    contenido, nombre = _archivo_a_bytes(ministerio_file)
+    ministerio_df, nomenclator_df = _leer_maestro_ministerio_cache(contenido, nombre)
     st.session_state["maestro_ministerio_df"] = ministerio_df
     st.session_state["maestro_ministerio_nombre"] = "cargado"
-    if hasattr(ministerio_file, "seek"):
-        ministerio_file.seek(0)
-    try:
-        st.session_state["nomenclator_parafarmacia_financiada_df"] = normalizar_columnas_nomenclator(
-            pd.read_excel(ministerio_file)
-        )
-    except ValueError:
-        st.session_state["nomenclator_parafarmacia_financiada_df"] = None
+    st.session_state["nomenclator_parafarmacia_financiada_df"] = nomenclator_df
     if persistir:
         maestros_persistentes.guardar_archivo("ministerio", ministerio_file)
 
 
 def _procesar_maestro_manual(maestro_file, persistir=False):
-    maestro_df = maestro_laboratorios.leer_maestro_laboratorios(maestro_file)
-    maestro_df["fuente_maestro"] = "manual"
+    contenido, nombre = _archivo_a_bytes(maestro_file)
+    maestro_df = _leer_maestro_manual_cache(contenido, nombre)
     st.session_state["maestro_laboratorios_df"] = maestro_df
     st.session_state["maestro_laboratorios_nombre"] = "cargado"
     if persistir:
@@ -217,7 +270,8 @@ def _procesar_maestro_manual(maestro_file, persistir=False):
 
 
 def _procesar_nomenclator_aemps(nomenclator_file, persistir=False):
-    nomenclator_df = nomenclator_aemps.leer_nomenclator_aemps(nomenclator_file)
+    contenido, nombre = _archivo_a_bytes(nomenclator_file)
+    nomenclator_df = _leer_nomenclator_aemps_cache(contenido, nombre)
     st.session_state["maestro_medicamentos_aemps_df"] = nomenclator_df
     st.session_state["maestro_medicamentos_aemps_nombre"] = "cargado"
     if persistir:
@@ -243,6 +297,8 @@ def _limpiar_maestro_en_sesion(clave):
     }
     for clave_sesion in claves_por_tipo.get(clave, []):
         st.session_state.pop(clave_sesion, None)
+    st.session_state.pop("_maestro_laboratorios_huella", None)
+    st.session_state.pop("_maestro_laboratorios_combinado", None)
 
 
 def _mostrar_estado_maestro_persistente(clave, etiqueta):
@@ -291,6 +347,16 @@ def _obtener_maestro_laboratorios():
     manual_df = st.session_state.get("maestro_laboratorios_df")
     ministerio_df = st.session_state.get("maestro_ministerio_df")
     aemps_df = st.session_state.get("maestro_medicamentos_aemps_df")
+    huella = tuple(
+        (
+            id(df),
+            len(df) if df is not None else 0,
+            tuple(df.columns) if df is not None and not df.empty else (),
+        )
+        for df in (manual_df, ministerio_df, aemps_df)
+    )
+    if st.session_state.get("_maestro_laboratorios_huella") == huella:
+        return st.session_state.get("_maestro_laboratorios_combinado")
 
     piezas = []
     if manual_df is not None and not manual_df.empty:
@@ -301,10 +367,14 @@ def _obtener_maestro_laboratorios():
         piezas.append(aemps_df.copy())
 
     if not piezas:
+        st.session_state["_maestro_laboratorios_huella"] = huella
+        st.session_state["_maestro_laboratorios_combinado"] = None
         return None
 
     combinado = pd.concat(piezas, ignore_index=True)
     combinado = combinado.drop_duplicates(subset=["cn"], keep="first").reset_index(drop=True)
+    st.session_state["_maestro_laboratorios_huella"] = huella
+    st.session_state["_maestro_laboratorios_combinado"] = combinado
     return combinado
 
 
@@ -490,15 +560,21 @@ def _render_base_maestra_laboratorios():
             "Base EFG cargada como tabla maestra neutra. No contiene laboratorio recomendado fijo; "
             "la recomendación se calculará dinámicamente con datos reales de cada farmacia."
         )
-        if tabla_equivalencias_efg is not None and not tabla_equivalencias_efg.empty:
-            st.caption("Tabla equivalencias EFG")
-            st.dataframe(tabla_equivalencias_efg)
-        if grupos_homogeneos_efg is not None and not grupos_homogeneos_efg.empty:
-            st.caption("Grupos homogéneos")
-            st.dataframe(grupos_homogeneos_efg)
-        if opciones_por_grupo_efg is not None and not opciones_por_grupo_efg.empty:
-            st.caption("Opciones por grupo")
-            st.dataframe(opciones_por_grupo_efg)
+        mostrar_tablas_efg = st.checkbox(
+            "Mostrar tablas completas EFG",
+            value=False,
+            key="mostrar_tablas_completas_efg",
+        )
+        if mostrar_tablas_efg:
+            if tabla_equivalencias_efg is not None and not tabla_equivalencias_efg.empty:
+                st.caption("Tabla equivalencias EFG")
+                st.dataframe(tabla_equivalencias_efg)
+            if grupos_homogeneos_efg is not None and not grupos_homogeneos_efg.empty:
+                st.caption("Grupos homogéneos")
+                st.dataframe(grupos_homogeneos_efg)
+            if opciones_por_grupo_efg is not None and not opciones_por_grupo_efg.empty:
+                st.caption("Opciones por grupo")
+                st.dataframe(opciones_por_grupo_efg)
 
     if maestro_df is not None and not maestro_df.empty:
         m1, m2 = st.columns(2)
@@ -525,7 +601,7 @@ def _leer_albaranes_genericos(uploaded_files, proveedor, tipo_compra):
         df_temp["proveedor"] = proveedor
         df_temp["tipo_compra"] = tipo_compra
 
-        col_albaran = next((c for c in df_temp.columns if "albaran" in c), None)
+        col_albaran = _buscar_columna_albaran(df_temp.columns)
         if col_albaran:
             df_temp["albaran"] = df_temp[col_albaran].apply(normalizar_albaran)
 
@@ -2118,7 +2194,7 @@ def render_vida_pharma():
             df_temp["proveedor"] = "bidafarma"
             df_temp["tipo_compra"] = "goteo"
 
-            col_albaran = next((c for c in df_temp.columns if "albaran" in c), None)
+            col_albaran = _buscar_columna_albaran(df_temp.columns)
 
             if col_albaran:
                 df_temp["albaran"] = df_temp[col_albaran].apply(normalizar_albaran)
@@ -2140,7 +2216,7 @@ def render_vida_pharma():
             df_temp["proveedor"] = "bidafarma"
             df_temp["tipo_compra"] = "transfer"
 
-            col_albaran = next((c for c in df_temp.columns if "albaran" in c), None)
+            col_albaran = _buscar_columna_albaran(df_temp.columns)
 
             if col_albaran:
                 df_temp["albaran"] = df_temp[col_albaran].apply(normalizar_albaran)

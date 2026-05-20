@@ -39,6 +39,50 @@ def normalizar_nombre_columna(columna):
     return re.sub(r"\s+", " ", texto).strip()
 
 
+def normalizar_texto(texto):
+    texto = str(texto).lower().strip()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _parece_numero_albaran(numero):
+    return bool(numero and re.fullmatch(r"\d{6,10}", str(numero)))
+
+
+def _columnas_albaran(df):
+    return [col for col in df.columns if "albar" in normalizar_nombre_columna(col)]
+
+
+def _extraer_albaranes_factura(df, tokens_fin_bloque):
+    albaranes = []
+    columnas = _columnas_albaran(df)
+    leyendo_albaranes = True
+
+    for _, row in df.iterrows():
+        valores = [str(x).strip() for x in row.values if pd.notna(x)]
+        if not valores:
+            continue
+
+        texto = normalizar_texto(" ".join(valores))
+        if len(texto) < 5:
+            continue
+
+        candidatos = columnas or list(df.columns)
+        for col in candidatos:
+            num = extraer_numero_albaran(row.get(col))
+            if _parece_numero_albaran(num):
+                albaranes.append(num)
+
+        if any(token in texto for token in tokens_fin_bloque):
+            leyendo_albaranes = False
+
+        if not leyendo_albaranes and columnas:
+            break
+
+    return albaranes
+
+
 def limpiar_texto(texto):
     texto = re.sub(r"\d+(\.\d+)?", "", texto)
     return texto.strip()
@@ -63,9 +107,10 @@ def analizar_factura_bidafarma(file):
     gastos = []
     ajustes_comerciales = []
 
-    col_albaran = next((c for c in df.columns if "albaran" in c or "albar" in c), None)
-
-    leyendo_albaranes = True
+    albaranes = _extraer_albaranes_factura(
+        df,
+        tokens_fin_bloque=["servicio", "gestion", "avantia", "ajuste comercial"],
+    )
 
     for _, row in df.iterrows():
 
@@ -77,15 +122,6 @@ def analizar_factura_bidafarma(file):
 
         if len(texto) < 5:
             continue
-
-        if any(x in texto for x in ["servicio", "gestion", "gestión", "avantia", "ajuste comercial"]):
-            leyendo_albaranes = False
-
-        if leyendo_albaranes and col_albaran:
-            valor = str(row[col_albaran]).strip()
-            num = extraer_numero_albaran(valor)
-            if num:
-                albaranes.append(num)
 
         if any(x in texto for x in ["iva", "recargo", "total"]):
             continue
@@ -173,9 +209,10 @@ def analizar_factura_transfer(file):
     gastos = []
     abonos = []
 
-    col_albaran = next((c for c in df.columns if "albaran" in c or "albar" in c), None)
-
-    leyendo_albaranes = True
+    albaranes = _extraer_albaranes_factura(
+        df,
+        tokens_fin_bloque=["log", "abono", "laboratorio"],
+    )
 
     for _, row in df.iterrows():
 
@@ -187,16 +224,6 @@ def analizar_factura_transfer(file):
 
         if len(texto) < 5:
             continue
-
-        if any(x in texto for x in ["log", "abono", "laboratorio"]):
-            leyendo_albaranes = False
-
-        # ALBARANES
-        if leyendo_albaranes and col_albaran:
-            valor = str(row[col_albaran]).strip()
-            num = extraer_numero_albaran(valor)
-            if num:
-                albaranes.append(num)
 
         if any(x in texto for x in ["iva", "recargo", "total"]):
             continue
