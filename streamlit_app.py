@@ -2481,8 +2481,9 @@ def render_vida_pharma():
 
             _mostrar_validacion_economica_factura(df_goteo, resultado, etiqueta="factura normal")
 
-            st.subheader("💸 Gastos factura normal")
-            st.dataframe(resultado["gastos"])
+            if resultado["gastos"] is not None and not resultado["gastos"].empty:
+                st.subheader("Gastos factura normal")
+                st.dataframe(resultado["gastos"])
 
             ajustes_comerciales = resultado.get("ajustes_comerciales", pd.DataFrame())
             permite_ajuste = condicion_detectada is None or condicion_detectada["ajuste_comercial_factura"]
@@ -2553,7 +2554,7 @@ def render_vida_pharma():
 
             resumen = resultado.get("resumen_costes")
 
-            if resumen:
+            if resumen and abs(float(resumen.get("total", 0) or 0)) > 0.0001:
                 st.subheader("💰 Coste total factura normal")
 
                 col1, col2, col3 = st.columns(3)
@@ -3009,6 +3010,7 @@ def render_vida_pharma():
         analisis_transfer=analisis_transfer,
     )
 
+    st.divider()
     st.header("Generación de informe")
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
     descuento_goteo_real = _descuento_goteo_real_desde_resumen(
