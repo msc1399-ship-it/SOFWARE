@@ -3105,6 +3105,7 @@ st.set_page_config(layout="wide")
 st.title("📊 Auditoría de Compras Farmacia")
 
 _verificar_acceso_app()
+_asegurar_maestros_en_sesion()
 
 if st.button("Borrar datos cargados"):
     st.session_state.clear()
