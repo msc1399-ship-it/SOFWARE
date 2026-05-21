@@ -119,6 +119,36 @@ def _mostrar_dataframe_completo(df):
     st.dataframe(df)
 
 
+def _vista_compras_ligera(df):
+    if df is None or df.empty:
+        return df
+    columnas_preferidas = [
+        "fecha",
+        "albaran",
+        "cn",
+        "descripcion",
+        "seccion_albaran",
+        "tipo_compra",
+        "categoria",
+        "descuento_cargo",
+        "unidades",
+        "bruto",
+        "neto",
+        "iva",
+        "pvp",
+        "laboratorio_maestro",
+        "tipo_producto",
+        "es_especialidad_cara",
+        "es_parafarmacia_financiada",
+        "tipo_parafarmacia",
+        "fuente_deteccion_parafarmacia_financiada",
+    ]
+    columnas = [col for col in columnas_preferidas if col in df.columns]
+    if not columnas:
+        return df
+    return df.loc[:, columnas].copy()
+
+
 def _mostrar_error_procesamiento(mensaje, error=None):
     if error is not None:
         st.error(f"{mensaje}: {error}")
@@ -666,7 +696,7 @@ def _mostrar_vistas_albaranes(df):
 
         etiqueta = "Ver detalle compras goteo" if tipo == "goteo" else "Ver detalle compras transfer"
         with st.expander(etiqueta, expanded=False):
-            _mostrar_dataframe_completo(df_tipo)
+            _mostrar_dataframe_completo(_vista_compras_ligera(df_tipo))
 
 
 def _guardar_analisis_distribuidora(proveedor_id, analisis):
@@ -3163,18 +3193,18 @@ if st.button("Borrar datos cargados"):
     st.session_state.clear()
     st.rerun()
 
-with st.expander("Base maestra CN / laboratorio", expanded=False):
-    _render_base_maestra_laboratorios()
+with st.sidebar:
+    seccion_activa = st.radio(
+        "Apartado",
+        SECCIONES,
+        label_visibility="visible",
+    )
 
-with st.expander("Contexto de farmacia", expanded=False):
-    render_contexto_farmacia()
+    with st.expander("Base maestra CN / laboratorio", expanded=False):
+        _render_base_maestra_laboratorios()
 
-seccion_activa = st.radio(
-    "Selecciona el apartado de trabajo",
-    SECCIONES,
-    horizontal=True,
-    label_visibility="collapsed",
-)
+    with st.expander("Contexto de farmacia", expanded=False):
+        render_contexto_farmacia()
 
 st.divider()
 

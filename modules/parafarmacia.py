@@ -169,6 +169,13 @@ def detectar_parafarmacia_financiada(df_compras, df_nomenclator=None):
         financiados = set(nomenclator.loc[nomenclator["financiado"], "cn"].dropna().astype(str))
         mask_nomenclator = cn.astype(str).isin(financiados)
         extras = nomenclator[["cn", "laboratorio_nomenclator", "familia_nomenclator", "descripcion_nomenclator"]]
+        columnas_extra = [col for col in extras.columns if col != "cn"]
+        columnas_a_limpiar = [
+            col for col in df.columns
+            if col in columnas_extra or any(col == f"{base}_{sufijo}" for base in columnas_extra for sufijo in ["x", "y"])
+        ]
+        if columnas_a_limpiar:
+            df = df.drop(columns=columnas_a_limpiar)
         df = df.merge(extras, on="cn", how="left")
 
     if pvp_cols:
