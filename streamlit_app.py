@@ -122,20 +122,69 @@ def _mostrar_dataframe_completo(df):
 def _vista_compras_ligera(df):
     if df is None or df.empty:
         return df
+
+    def buscar_columna(candidatas):
+        columnas_norm = {_normalizar_nombre_columna(col).replace(" ", "_"): col for col in df.columns}
+        for candidata in candidatas:
+            normalizada = _normalizar_nombre_columna(candidata).replace(" ", "_")
+            if normalizada in columnas_norm:
+                return columnas_norm[normalizada]
+        for col in df.columns:
+            nombre = _normalizar_nombre_columna(col).replace(" ", "_")
+            if any(token in nombre for token in candidatas):
+                return col
+        return None
+
+    columna_descuento_cargo = buscar_columna([
+        "d/c",
+        "dc",
+        "descuento_cargo",
+        "descuento cargo",
+        "dto_cargo",
+        "dto/cargo",
+    ])
+    columna_descripcion = buscar_columna([
+        "descripcion",
+        "descripción",
+        "descripcion_articulo",
+        "descripcion articulo",
+        "descripción artículo",
+        "articulo",
+        "artículo",
+        "producto",
+    ])
+    columna_coste_total = buscar_columna([
+        "coste_total_iva_re",
+        "coste_total_con_iva_re",
+        "coste_total_con_iva_y_re",
+        "total_iva_re",
+        "total_con_iva_re",
+        "coste_total",
+    ])
+    columna_pvpiva = buscar_columna([
+        "pvpiva",
+        "pvp_iva",
+        "pvp iva",
+        "pvp con iva",
+        "pvp_con_iva",
+    ])
+
     columnas_preferidas = [
         "fecha",
         "albaran",
         "cn",
-        "descripcion",
+        columna_descripcion,
         "seccion_albaran",
         "tipo_compra",
         "categoria",
-        "descuento_cargo",
+        columna_descuento_cargo,
         "unidades",
         "bruto",
         "neto",
         "iva",
+        columna_coste_total,
         "pvp",
+        columna_pvpiva,
         "laboratorio_maestro",
         "tipo_producto",
         "es_especialidad_cara",
@@ -143,7 +192,10 @@ def _vista_compras_ligera(df):
         "tipo_parafarmacia",
         "fuente_deteccion_parafarmacia_financiada",
     ]
-    columnas = [col for col in columnas_preferidas if col in df.columns]
+    columnas = []
+    for col in columnas_preferidas:
+        if col in df.columns and col not in columnas:
+            columnas.append(col)
     if not columnas:
         return df
     return df.loc[:, columnas].copy()
