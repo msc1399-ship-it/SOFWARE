@@ -640,6 +640,38 @@ def generar_analisis_distribuidora(
             proveedor=proveedor_detectado or proveedor,
             descuento_goteo_real=descuentos.get("goteo_real_pct"),
         )
+    if (
+        (not analisis_clubes or not analisis_clubes.get("ok"))
+        and desglose is not None
+        and not desglose.empty
+        and "bloque" in desglose.columns
+    ):
+        fila_clubes = desglose[desglose["bloque"].astype(str).str.lower().eq("clubes")]
+        if not fila_clubes.empty:
+            bruto_clubes = float(pd.to_numeric(fila_clubes.iloc[0].get("bruto", 0), errors="coerce") or 0)
+            lineas_clubes = int(pd.to_numeric(fila_clubes.iloc[0].get("lineas", 0), errors="coerce") or 0)
+            if bruto_clubes > 0 or lineas_clubes > 0:
+                descuento_goteo = descuentos.get("goteo_real_pct")
+                perdida_vs_goteo = 0.0
+                alertas = ["Falta documento de escalados/liquidaciones para calcular perdida real."]
+                if descuento_goteo is None:
+                    alertas.append("No hay descuento real de goteo disponible para estimar perdida vs descuento habitual.")
+                else:
+                    perdida_vs_goteo = round(bruto_clubes * (float(descuento_goteo) / 100), 2)
+                analisis_clubes = {
+                    "ok": True,
+                    "proveedor": proveedor_detectado or proveedor,
+                    "lineas_club": lineas_clubes,
+                    "compra_total_club": round(bruto_clubes, 2),
+                    "compra_con_liquidacion": 0.0,
+                    "compra_sin_liquidacion": round(bruto_clubes, 2),
+                    "pct_club_sin_liquidacion": 100.0,
+                    "perdida_vs_descuento_habitual": perdida_vs_goteo,
+                    "escalados": pd.DataFrame(),
+                    "oportunidades_siguiente_tramo": pd.DataFrame(),
+                    "alertas": alertas,
+                    "detalle_club": pd.DataFrame(),
+                }
     especialidad_cara = calcular_especialidad_cara(df)
     parafarmacia_financiada = calcular_parafarmacia_financiada(df)
     operativa = calcular_operativa_proveedor(df)
