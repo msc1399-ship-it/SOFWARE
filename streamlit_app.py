@@ -1100,6 +1100,56 @@ def _mostrar_validacion_economica_factura(df_albaranes, resultado_factura, etiqu
     st.dataframe(df_validaciones)
 
 
+def _mostrar_validacion_economica_factura(df_albaranes, resultado_factura, etiqueta="factura"):
+    if df_albaranes is None or resultado_factura is None:
+        return
+
+    total_albaranes = round(float(_serie_numerica(df_albaranes, "neto").sum()), 2)
+    total_factura = resultado_factura.get("total_albaranes_factura")
+    bases_albaranes = _calcular_bases_iva_albaranes(df_albaranes)
+    bases_factura = resultado_factura.get("bases_iva") or {}
+
+    validaciones = []
+
+    def agregar_validacion(nombre, valor_albaranes, valor_factura):
+        if valor_factura is None:
+            validaciones.append({
+                "validacion": nombre,
+                "albaranes": round(float(valor_albaranes or 0), 2),
+                "factura": None,
+                "diferencia": None,
+                "estado": "No disponible en factura",
+            })
+            return
+        diferencia = round(float(valor_albaranes or 0) - float(valor_factura or 0), 2)
+        validaciones.append({
+            "validacion": nombre,
+            "albaranes": round(float(valor_albaranes or 0), 2),
+            "factura": round(float(valor_factura or 0), 2),
+            "diferencia": diferencia,
+            "estado": "Validado" if abs(diferencia) <= 0.05 else "Diferencia detectada",
+        })
+
+    agregar_validacion("Total neto", total_albaranes, total_factura)
+    agregar_validacion("Base IVA 4%", bases_albaranes["base_iva_4"], bases_factura.get("base_iva_4"))
+    agregar_validacion("Base IVA 10%", bases_albaranes["base_iva_10"], bases_factura.get("base_iva_10"))
+    agregar_validacion("Base IVA 21%", bases_albaranes["base_iva_21"], bases_factura.get("base_iva_21"))
+
+    df_validaciones = pd.DataFrame(validaciones)
+    diferencias = df_validaciones[df_validaciones["estado"].eq("Diferencia detectada")].copy()
+
+    if diferencias.empty:
+        st.success(f"Validado: totales y bases IVA de {etiqueta} cuadran con los albaranes.")
+        return
+
+    detalle = "; ".join(
+        f"{fila['validacion']}: {fila['diferencia']:.2f} €"
+        for _, fila in diferencias.iterrows()
+    )
+    st.error(f"Diferencia detectada en {etiqueta}: {detalle}")
+    st.dataframe(df_validaciones)
+
+
 def _descuento_pct(bruto_total, coste_total):
     if bruto_total <= 0:
         return 0.0
