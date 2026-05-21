@@ -661,6 +661,9 @@ def _mostrar_vistas_albaranes(df):
         c5.metric("Desc %", round(descuento, 2))
         c6.metric("Abonos", f"{abs(total_abonos):.1f} €")
 
+        bases_iva = _calcular_bases_iva_albaranes(df_tipo)
+        _mostrar_metricas_bases_iva(bases_iva)
+
         etiqueta = "Ver detalle compras goteo" if tipo == "goteo" else "Ver detalle compras transfer"
         with st.expander(etiqueta, expanded=False):
             _mostrar_dataframe_completo(df_tipo)
@@ -988,6 +991,113 @@ def _serie_numerica(df, columna):
     if df is None or columna not in df.columns:
         return pd.Series([0.0] * len(df), index=df.index if df is not None else None)
     return pd.to_numeric(df[columna], errors="coerce").fillna(0.0)
+
+
+def _buscar_columna_por_tokens(df, tokens_obligatorios, tokens_excluir=None):
+    if df is None:
+        return None
+    tokens_excluir = tokens_excluir or []
+    for columna in df.columns:
+        nombre = _normalizar_nombre_columna(columna)
+        if all(token in nombre for token in tokens_obligatorios) and not any(token in nombre for token in tokens_excluir):
+            return columna
+    return None
+
+
+def _calcular_bases_iva_albaranes(df):
+    bases = {
+        "base_iva_4": 0.0,
+        "base_iva_10": 0.0,
+        "base_iva_21": 0.0,
+    }
+    if df is None or df.empty:
+        return bases
+
+    col_iva = "iva" if "iva" in df.columns else _buscar_columna_por_tokens(df, ["iva"], ["pvp", "precio"])
+    if col_iva is None or "neto" not in df.columns:
+        return bases
+
+    trabajo = df.copy()
+    trabajo["_iva_base_validacion"] = pd.to_numeric(trabajo[col_iva], errors="coerce").fillna(-1)
+    trabajo["_neto_base_validacion"] = pd.to_numeric(trabajo["neto"], errors="coerce").fillna(0.0)
+
+    for tipo_iva in [4, 10, 21]:
+        mask = trabajo["_iva_base_validacion"].sub(tipo_iva).abs().le(0.01)
+        bases[f"base_iva_{tipo_iva}"] = round(float(trabajo.loc[mask, "_neto_base_validacion"].sum()), 2)
+
+    return bases
+
+
+def _mostrar_metricas_bases_iva(bases, prefijo="Base"):
+    b1, b2, b3 = st.columns(3)
+    b1.metric(f"{prefijo} IVA 4%", f"{float(bases.get('base_iva_4', 0) or 0):.2f} €")
+    b2.metric(f"{prefijo} IVA 10%", f"{float(bases.get('base_iva_10', 0) or 0):.2f} €")
+    b3.metric(f"{prefijo} IVA 21%", f"{float(bases.get('base_iva_21', 0) or 0):.2f} €")
+
+
+def _mostrar_validacion_economica_factura(df_albaranes, resultado_factura, etiqueta="factura"):
+    if df_albaranes is None or resultado_factura is None:
+        return
+
+    total_albaranes = round(float(_serie_numerica(df_albaranes, "neto").sum()), 2)
+    total_factura = resultado_factura.get("total_albaranes_factura")
+    bases_albaranes = _calcular_bases_iva_albaranes(df_albaranes)
+    bases_factura = resultado_factura.get("bases_iva") or {}
+
+    st.subheader("Validación bases imponibles e IVA")
+    f1, f2 = st.columns(2)
+    f1.metric("Total neto albaranes", f"{total_albaranes:.2f} €")
+    f2.metric(
+        "Total neto factura",
+        "-" if total_factura is None else f"{float(total_factura):.2f} €",
+    )
+
+    st.caption("Bases detectadas en albaranes")
+    _mostrar_metricas_bases_iva(bases_albaranes, prefijo="Albaranes")
+    st.caption("Bases detectadas en factura")
+    _mostrar_metricas_bases_iva(bases_factura, prefijo="Factura")
+
+    validaciones = []
+
+    def agregar_validacion(nombre, valor_albaranes, valor_factura):
+        if valor_factura is None:
+            validaciones.append({
+                "validacion": nombre,
+                "albaranes": round(float(valor_albaranes or 0), 2),
+                "factura": None,
+                "diferencia": None,
+                "estado": "No disponible en factura",
+            })
+            return
+        diferencia = round(float(valor_albaranes or 0) - float(valor_factura or 0), 2)
+        validaciones.append({
+            "validacion": nombre,
+            "albaranes": round(float(valor_albaranes or 0), 2),
+            "factura": round(float(valor_factura or 0), 2),
+            "diferencia": diferencia,
+            "estado": "Validado" if abs(diferencia) <= 0.05 else "Diferencia detectada",
+        })
+
+    agregar_validacion("Total neto", total_albaranes, total_factura)
+    agregar_validacion("Base IVA 4%", bases_albaranes["base_iva_4"], bases_factura.get("base_iva_4"))
+    agregar_validacion("Base IVA 10%", bases_albaranes["base_iva_10"], bases_factura.get("base_iva_10"))
+    agregar_validacion("Base IVA 21%", bases_albaranes["base_iva_21"], bases_factura.get("base_iva_21"))
+
+    df_validaciones = pd.DataFrame(validaciones)
+    diferencias = df_validaciones[
+        df_validaciones["estado"].eq("Diferencia detectada")
+    ].copy()
+
+    if diferencias.empty:
+        st.success(f"✔ Validado: los totales y bases IVA de {etiqueta} cuadran con los albaranes.")
+    else:
+        detalle = "; ".join(
+            f"{fila['validacion']}: {fila['diferencia']:.2f} €"
+            for _, fila in diferencias.iterrows()
+        )
+        st.error(f"⚠ Diferencia detectada en {etiqueta}: {detalle}")
+
+    st.dataframe(df_validaciones)
 
 
 def _descuento_pct(bruto_total, coste_total):
@@ -2319,6 +2429,8 @@ def render_vida_pharma():
             if total_factura_albaranes is not None:
                 st.metric("Total albaranes factura", f"{total_factura_albaranes:.2f} €")
 
+            _mostrar_validacion_economica_factura(df_goteo, resultado, etiqueta="factura normal")
+
             st.subheader("💸 Gastos factura normal")
             st.dataframe(resultado["gastos"])
 
@@ -2710,6 +2822,8 @@ def render_vida_pharma():
                     st.error(f"Faltan en transfer: {faltan}")
                 if sobran:
                     st.warning(f"Sobran en transfer: {sobran}")
+
+            _mostrar_validacion_economica_factura(df_transfer, resultado_transfer, etiqueta="factura transfer")
 
             st.subheader("🚚 Servicios logísticos")
             st.dataframe(resultado_transfer["gastos"])

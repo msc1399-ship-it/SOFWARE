@@ -15,6 +15,7 @@ def extraer_numero_albaran(texto):
             return str(int(texto))
 
     texto = str(texto).lower().strip()
+    texto = texto.replace("€", "")
     if not texto:
         return None
 
@@ -81,6 +82,9 @@ def _numero_decimal(valor):
     texto = str(valor).replace("€", "").replace("EUR", "").replace(" ", "").strip()
     if not texto:
         return None
+    texto = re.sub(r"[^0-9,.\-]", "", texto)
+    if not texto:
+        return None
     texto = re.sub(r"\.(?=\d{3}(?:\D|$))", "", texto)
     texto = texto.replace(",", ".")
     try:
@@ -107,6 +111,79 @@ def _sumar_total_albaranes_factura(df):
         encontrados += 1
 
     return round(total, 2) if encontrados else None
+
+
+def _bases_iva_vacias():
+    return {
+        "base_iva_4": 0.0,
+        "base_iva_10": 0.0,
+        "base_iva_21": 0.0,
+    }
+
+
+def _normalizar_tipo_iva(valor):
+    numero = _numero_decimal(valor)
+    if numero is None:
+        return None
+    if abs(numero - 4) <= 0.01:
+        return 4
+    if abs(numero - 10) <= 0.01:
+        return 10
+    if abs(numero - 21) <= 0.01:
+        return 21
+    return None
+
+
+def _extraer_bases_iva_factura(file):
+    if hasattr(file, "seek"):
+        file.seek(0)
+    df_raw = pd.read_excel(file, header=None)
+    if hasattr(file, "seek"):
+        file.seek(0)
+
+    bases = _bases_iva_vacias()
+    fila_cabecera = None
+    col_base = None
+    col_iva_pct = None
+
+    for idx, row in df_raw.iterrows():
+        celdas = {col: normalizar_texto(valor) for col, valor in row.items() if pd.notna(valor)}
+        if not celdas:
+            continue
+
+        contiene_base = any(texto in {"base", "bases"} or texto.startswith("base ") for texto in celdas.values())
+        contiene_pct_iva = any("%iva" in texto.replace(" ", "") or "% iva" in texto for texto in celdas.values())
+        if not (contiene_base and contiene_pct_iva):
+            continue
+
+        fila_cabecera = idx
+        for col, texto in celdas.items():
+            texto_compacto = texto.replace(" ", "")
+            if col_base is None and (texto in {"base", "bases"} or texto.startswith("base ")):
+                col_base = col
+            if col_iva_pct is None and ("%iva" in texto_compacto or "% iva" in texto):
+                col_iva_pct = col
+        break
+
+    if fila_cabecera is None or col_base is None or col_iva_pct is None:
+        return bases
+
+    for _, row in df_raw.iloc[int(fila_cabecera) + 1:].iterrows():
+        texto_fila = normalizar_texto(" ".join(str(x) for x in row.values if pd.notna(x)))
+        if any(token in texto_fila for token in ["total compras", "totales", "servicio", "gestion", "logistica"]):
+            break
+
+        tipo_iva = _normalizar_tipo_iva(row.get(col_iva_pct))
+        if tipo_iva is None:
+            continue
+
+        base = _numero_decimal(row.get(col_base))
+        if base is None:
+            continue
+
+        bases[f"base_iva_{tipo_iva}"] += base
+
+    return {clave: round(float(valor), 2) for clave, valor in bases.items()}
 
 
 def _detectar_columnas_albaran_en_crudo(df_raw):
@@ -212,6 +289,7 @@ def analizar_factura_bidafarma(file):
 
     df = pd.read_excel(file)
     df.columns = [normalizar_nombre_columna(c) for c in df.columns]
+    bases_iva = _extraer_bases_iva_factura(file)
 
     albaranes = []
     gastos = []
@@ -309,6 +387,7 @@ def analizar_factura_bidafarma(file):
             "total": round(total_final, 2)
         },
         "total_albaranes_factura": total_albaranes_factura,
+        "bases_iva": bases_iva,
     }
 
 
@@ -320,6 +399,7 @@ def analizar_factura_transfer(file):
 
     df = pd.read_excel(file)
     df.columns = [normalizar_nombre_columna(c) for c in df.columns]
+    bases_iva = _extraer_bases_iva_factura(file)
 
     albaranes = []
     gastos = []
@@ -411,4 +491,5 @@ def analizar_factura_transfer(file):
             "total": round(total_final, 2)
         },
         "total_albaranes_factura": total_albaranes_factura,
+        "bases_iva": bases_iva,
     }
