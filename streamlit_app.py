@@ -771,7 +771,11 @@ def _mostrar_analisis_clubes(analisis_clubes):
     c1.metric("Compra total club", f"{analisis_clubes.get('compra_total_club', 0):.2f} €")
     c2.metric("Compra sin liquidación", f"{analisis_clubes.get('compra_sin_liquidacion', 0):.2f} €")
     c3.metric("% sin liquidación", f"{analisis_clubes.get('pct_club_sin_liquidacion', 0):.2f}%")
-    c4.metric("Pérdida estimada vs goteo", f"{analisis_clubes.get('perdida_vs_descuento_habitual', 0):.2f} €")
+    c4.metric("Pérdida estimada vs condición", f"{analisis_clubes.get('perdida_vs_descuento_habitual', 0):.2f} €")
+
+    descuento_ref = analisis_clubes.get("descuento_habitual_referencia_pct")
+    if descuento_ref is not None:
+        st.caption(f"Referencia usada: descuento habitual de especialidad {float(descuento_ref):.2f}%.")
 
     for alerta in analisis_clubes.get("alertas", []):
         st.warning(alerta)

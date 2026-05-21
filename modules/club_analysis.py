@@ -123,6 +123,52 @@ def detectar_compras_club(df):
     return df[mask].copy()
 
 
+def _mask_club(df):
+    if df is None or df.empty:
+        return pd.Series([], dtype=bool)
+    clubes = detectar_compras_club(df)
+    return pd.Series(df.index.isin(clubes.index), index=df.index)
+
+
+def calcular_descuento_habitual_especialidad(df_compras):
+    df = _df_seguro(df_compras)
+    if df.empty:
+        return None
+
+    seccion = df.get("seccion_albaran", pd.Series("", index=df.index)).astype(str).map(_normalizar_texto)
+    tipo_compra = df.get("tipo_compra", pd.Series("", index=df.index)).astype(str).map(_normalizar_texto)
+    iva = _serie_numerica(df, "iva")
+    bruto = _serie_numerica(df, "bruto")
+    neto = _serie_numerica(df, "neto")
+    unidades = _serie_numerica(df, "unidades")
+    es_cara = df.get("es_especialidad_cara", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    es_club = _mask_club(df)
+
+    mask = (
+        tipo_compra.eq("goteo")
+        & seccion.eq("especialidad")
+        & iva.sub(4).abs().le(0.01)
+        & bruto.gt(0)
+        & neto.ge(0)
+        & unidades.ge(0)
+        & ~es_cara
+        & ~es_club
+    )
+    base = df[mask].copy()
+    if base.empty:
+        return None
+
+    descuentos = ((bruto[mask] - neto[mask]) / bruto[mask] * 100).round(2)
+    descuentos = descuentos[(descuentos > 0) & (descuentos < 100)]
+    if descuentos.empty:
+        return None
+
+    moda = descuentos.mode()
+    if not moda.empty:
+        return round(float(moda.iloc[0]), 2)
+    return round(float(descuentos.median()), 2)
+
+
 def normalizar_documento_clubes(df):
     df = _renombrar_columnas_flexibles(df)
     if df.empty:
@@ -195,13 +241,13 @@ def calcular_compra_club_sin_liquidacion(df_club, df_liquidaciones):
     return compra_con_liquidacion, compra_sin_liquidacion, df_club
 
 
-def calcular_perdida_vs_descuento_habitual(df_club, descuento_goteo_real):
+def calcular_perdida_vs_descuento_habitual(df_club, descuento_habitual):
     df_club = _df_seguro(df_club)
-    if df_club.empty or descuento_goteo_real is None:
+    if df_club.empty or descuento_habitual is None:
         return 0.0
 
     compra = float(_serie_numerica(df_club, "bruto").sum())
-    return round(compra * (float(descuento_goteo_real) / 100), 2)
+    return round(compra * (float(descuento_habitual) / 100), 2)
 
 
 def calcular_diferencia_siguiente_tramo(df_escalados):
@@ -283,6 +329,9 @@ def generar_resumen_clubes(
 def analizar_clubes(df_compras, df_escalados=None, df_liquidaciones=None, proveedor=None, descuento_goteo_real=None):
     df_club = detectar_compras_club(df_compras)
     alertas = []
+    descuento_habitual = calcular_descuento_habitual_especialidad(df_compras)
+    if descuento_habitual is None:
+        descuento_habitual = descuento_goteo_real
 
     if df_club.empty:
         return {
@@ -322,10 +371,10 @@ def analizar_clubes(df_compras, df_escalados=None, df_liquidaciones=None, provee
 
     perdida_vs_goteo = calcular_perdida_vs_descuento_habitual(
         club_sin_liquidacion,
-        descuento_goteo_real,
+        descuento_habitual,
     )
-    if descuento_goteo_real is None:
-        alertas.append("No hay descuento real de goteo disponible para estimar perdida vs descuento habitual.")
+    if descuento_habitual is None:
+        alertas.append("No hay descuento habitual de especialidad disponible para estimar perdida vs condicion comercial.")
 
     escalados = calcular_diferencia_siguiente_tramo(documento_norm)
     oportunidades = calcular_liquidacion_potencial(documento_norm)
@@ -343,4 +392,5 @@ def analizar_clubes(df_compras, df_escalados=None, df_liquidaciones=None, provee
             alertas=alertas,
         ),
         "detalle_club": df_club_marcado,
+        "descuento_habitual_referencia_pct": descuento_habitual,
     }

@@ -651,11 +651,13 @@ def generar_analisis_distribuidora(
             bruto_clubes = float(pd.to_numeric(fila_clubes.iloc[0].get("bruto", 0), errors="coerce") or 0)
             lineas_clubes = int(pd.to_numeric(fila_clubes.iloc[0].get("lineas", 0), errors="coerce") or 0)
             if bruto_clubes > 0 or lineas_clubes > 0:
-                descuento_goteo = descuentos.get("goteo_real_pct")
+                descuento_goteo = club_analysis.calcular_descuento_habitual_especialidad(df)
+                if descuento_goteo is None:
+                    descuento_goteo = descuentos.get("goteo_real_pct")
                 perdida_vs_goteo = 0.0
                 alertas = ["Falta documento de escalados/liquidaciones para calcular perdida real."]
                 if descuento_goteo is None:
-                    alertas.append("No hay descuento real de goteo disponible para estimar perdida vs descuento habitual.")
+                    alertas.append("No hay descuento habitual de especialidad disponible para estimar perdida vs condicion comercial.")
                 else:
                     perdida_vs_goteo = round(bruto_clubes * (float(descuento_goteo) / 100), 2)
                 analisis_clubes = {
@@ -671,6 +673,7 @@ def generar_analisis_distribuidora(
                     "oportunidades_siguiente_tramo": pd.DataFrame(),
                     "alertas": alertas,
                     "detalle_club": pd.DataFrame(),
+                    "descuento_habitual_referencia_pct": descuento_goteo,
                 }
     especialidad_cara = calcular_especialidad_cara(df)
     parafarmacia_financiada = calcular_parafarmacia_financiada(df)
