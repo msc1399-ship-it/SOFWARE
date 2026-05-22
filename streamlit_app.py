@@ -154,6 +154,52 @@ def _inyectar_estilos_dashboard():
             font-size: 0.76rem;
             margin-top: 8px;
         }
+        .dashboard-table-wrap {
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            background: rgba(15, 23, 42, 0.50);
+            border-radius: 8px;
+            margin: 10px 0 24px 0;
+            max-height: 520px;
+            overflow: auto;
+        }
+        .dashboard-table {
+            width: 100%;
+            min-width: 760px;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 0.86rem;
+        }
+        .dashboard-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: rgba(31, 41, 55, 0.98);
+            color: rgba(226, 232, 240, 0.92);
+            font-weight: 700;
+            text-align: left;
+            padding: 12px 14px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.26);
+            white-space: nowrap;
+        }
+        .dashboard-table tbody td {
+            color: #ffffff;
+            padding: 11px 14px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+            border-right: 1px solid rgba(148, 163, 184, 0.10);
+            white-space: nowrap;
+        }
+        .dashboard-table tbody tr:nth-child(even) {
+            background: rgba(31, 41, 55, 0.34);
+        }
+        .dashboard-table tbody tr:hover {
+            background: rgba(59, 130, 246, 0.14);
+        }
+        .dashboard-table tbody tr:last-child td {
+            border-bottom: 0;
+        }
+        .dashboard-table tbody td:first-child {
+            font-weight: 700;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -174,8 +220,62 @@ def _tarjetas_metricas(metricas):
     st.markdown('<div class="kpi-grid">' + "".join(tarjetas) + "</div>", unsafe_allow_html=True)
 
 
+def _nombre_columna_tabla(columna):
+    texto = str(columna).strip().replace("_", " ")
+    equivalencias = {
+        "cn": "CN",
+        "iva": "IVA",
+        "pvpiva": "PVP IVA",
+        "pvp iva": "PVP IVA",
+        "re": "RE",
+        "d c": "D/C",
+        "dc": "D/C",
+    }
+    normalizado = _normalizar_nombre_columna(texto).replace(" ", "_")
+    if normalizado in {"cn", "iva", "pvpiva", "pvp_iva", "re", "dc", "d_c"}:
+        return equivalencias.get(normalizado.replace("_", " "), equivalencias.get(normalizado, texto.upper()))
+    return texto[:1].upper() + texto[1:]
+
+
+def _formatear_valor_tabla(valor):
+    try:
+        es_vacio = pd.isna(valor)
+    except (TypeError, ValueError):
+        es_vacio = False
+    if isinstance(es_vacio, (list, tuple)):
+        es_vacio = False
+    if hasattr(es_vacio, "any"):
+        es_vacio = False
+    if valor is None or es_vacio:
+        return "-"
+    if isinstance(valor, bool):
+        return "Sí" if valor else "No"
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        numero = float(valor)
+        if abs(numero - round(numero)) < 0.000001:
+            return str(int(round(numero)))
+        return f"{numero:.2f}".rstrip("0").rstrip(".")
+    return str(valor)
+
+
+def _mostrar_tabla_dashboard(df, max_filas=None, renombrar_columnas=True):
+    if df is None:
+        return
+    tabla = pd.DataFrame(df).copy()
+    if tabla.empty:
+        st.info("No hay datos para mostrar.")
+        return
+    if max_filas is not None:
+        tabla = tabla.head(max_filas).copy()
+    if renombrar_columnas:
+        tabla.columns = [_nombre_columna_tabla(col) for col in tabla.columns]
+    tabla = tabla.apply(lambda columna: columna.map(_formatear_valor_tabla))
+    html_tabla = tabla.to_html(index=False, escape=True, border=0, classes="dashboard-table")
+    st.markdown(f'<div class="dashboard-table-wrap">{html_tabla}</div>', unsafe_allow_html=True)
+
+
 def _mostrar_dataframe_completo(df):
-    st.dataframe(df)
+    _mostrar_tabla_dashboard(df, renombrar_columnas=False)
 
 
 def _vista_compras_ligera(df):
@@ -854,17 +954,17 @@ def _mostrar_analisis_clubes(analisis_clubes):
     oportunidades = analisis_clubes.get("oportunidades_siguiente_tramo", pd.DataFrame())
     if oportunidades is not None and not oportunidades.empty:
         st.caption("Oportunidades cercanas a siguiente tramo")
-        st.dataframe(oportunidades)
+        _mostrar_tabla_dashboard(oportunidades)
 
     escalados = analisis_clubes.get("escalados", pd.DataFrame())
     if escalados is not None and not escalados.empty:
         st.caption("Detalle de escalados")
-        st.dataframe(escalados)
+        _mostrar_tabla_dashboard(escalados)
 
     detalle = analisis_clubes.get("detalle_club", pd.DataFrame())
     if detalle is not None and not detalle.empty:
         st.caption("Detalle de líneas club")
-        st.dataframe(detalle)
+        _mostrar_tabla_dashboard(detalle)
 
 
 def _mostrar_tarjeta_condicion_comercial(condicion_detectada=None, analisis_faceta=None):
@@ -901,14 +1001,14 @@ def _mostrar_condiciones_en_informe(analisis):
         return
 
     st.subheader("Condiciones comerciales y franquicias")
-    st.dataframe(resumen)
+    _mostrar_tabla_dashboard(resumen)
 
     if detalles:
         with st.expander("Ver detalle técnico de condiciones", expanded=False):
             for nombre, detalle in detalles.items():
                 if detalle is not None and not detalle.empty:
                     st.caption(nombre.replace("_", " ").title())
-                    st.dataframe(detalle)
+                    _mostrar_tabla_dashboard(detalle)
 
 
 def _mostrar_analisis_distribuidora(analisis):
@@ -955,12 +1055,12 @@ def _mostrar_analisis_distribuidora(analisis):
     desglose = analisis.get("desglose_por_tipo", analisis.get("desglose", pd.DataFrame()))
     if desglose is not None and not desglose.empty:
         st.caption("Desglose por tipo de compra")
-        st.dataframe(desglose)
+        _mostrar_tabla_dashboard(desglose)
 
     cargos = analisis.get("gastos_ocultos", analisis.get("cargos", pd.DataFrame()))
     if cargos is not None and not cargos.empty:
         st.caption("Gastos y costes ocultos")
-        st.dataframe(cargos)
+        _mostrar_tabla_dashboard(cargos)
 
     especialidad_cara_resumen = analisis.get("especialidad_cara_resumen", {})
     if especialidad_cara_resumen and especialidad_cara_resumen.get("lineas_detectadas", 0) > 0:
@@ -984,7 +1084,7 @@ def _mostrar_analisis_distribuidora(analisis):
                 "value": f"{especialidad_cara_resumen.get('base_iva4_sujeta_ajuste', 0):.2f} €",
             },
         ])
-        st.dataframe(pd.DataFrame([{
+        _mostrar_tabla_dashboard(pd.DataFrame([{
             "base_iva4_total": especialidad_cara_resumen.get("base_iva4_total", 0),
             "base_iva4_especialidad_cara": especialidad_cara_resumen.get("base_iva4_especialidad_cara", 0),
             "base_iva4_sujeta_ajuste": especialidad_cara_resumen.get("base_iva4_sujeta_ajuste", 0),
@@ -1004,7 +1104,7 @@ def _mostrar_analisis_distribuidora(analisis):
             {"label": "% compra total", "value": f"{resumen_para_fin.get('porcentaje_sobre_compra_total', 0):.2f}%"},
             {"label": "% parafarmacia", "value": f"{resumen_para_fin.get('porcentaje_sobre_parafarmacia_total', 0):.2f}%"},
         ])
-        st.dataframe(pd.DataFrame([{
+        _mostrar_tabla_dashboard(pd.DataFrame([{
             "base_parafarmacia_total": resumen_para_fin.get("base_parafarmacia_total", 0),
             "base_parafarmacia_financiada": resumen_para_fin.get("base_parafarmacia_financiada", 0),
             "base_parafarmacia_no_financiada": resumen_para_fin.get("base_parafarmacia_no_financiada", 0),
@@ -1013,30 +1113,30 @@ def _mostrar_analisis_distribuidora(analisis):
         top_labs = parafarmacia_financiada.get("top_laboratorios", pd.DataFrame())
         if top_labs is not None and not top_labs.empty:
             st.caption("Top laboratorios parafarmacia financiada")
-            st.dataframe(top_labs)
+            _mostrar_tabla_dashboard(top_labs)
         top_cn = parafarmacia_financiada.get("top_cn", pd.DataFrame())
         if top_cn is not None and not top_cn.empty:
             st.caption("Top CN parafarmacia financiada")
-            st.dataframe(top_cn)
+            _mostrar_tabla_dashboard(top_cn)
 
     operativa = analisis.get("operativa_proveedor", {})
     if operativa:
         st.caption("Operativa proveedor")
-        st.dataframe(pd.DataFrame([operativa]))
+        _mostrar_tabla_dashboard(pd.DataFrame([operativa]))
 
     _mostrar_analisis_clubes(analisis.get("clubes"))
 
     imputaciones_transfer = analisis.get("imputaciones_transfer_manuales", pd.DataFrame())
     if imputaciones_transfer is not None and not imputaciones_transfer.empty:
         st.subheader("Imputaciones manuales de abonos transfer")
-        st.dataframe(imputaciones_transfer)
+        _mostrar_tabla_dashboard(imputaciones_transfer)
 
     _mostrar_condiciones_en_informe(analisis)
 
     top_impacto = analisis.get("top_impacto", pd.DataFrame())
     if top_impacto is not None and not top_impacto.empty:
         st.caption("Top impacto coste aparente vs coste real")
-        st.dataframe(top_impacto)
+        _mostrar_tabla_dashboard(top_impacto)
     else:
         st.info(analisis.get("top_impacto_mensaje") or "Top impacto pendiente: no hay costes imputados suficientes para calcular diferencias.")
 
