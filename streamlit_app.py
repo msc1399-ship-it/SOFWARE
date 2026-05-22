@@ -168,15 +168,10 @@ def _tarjetas_metricas(metricas):
         nota = html.escape(str(metrica.get("note", "")))
         nota_html = f'<div class="kpi-note">{nota}</div>' if nota else ""
         tarjetas.append(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">{etiqueta}</div>
-                <div class="kpi-value">{valor}</div>
-                {nota_html}
-            </div>
-            """
+            f'<div class="kpi-card"><div class="kpi-label">{etiqueta}</div>'
+            f'<div class="kpi-value">{valor}</div>{nota_html}</div>'
         )
-    st.markdown(f'<div class="kpi-grid">{"".join(tarjetas)}</div>', unsafe_allow_html=True)
+    st.markdown('<div class="kpi-grid">' + "".join(tarjetas) + "</div>", unsafe_allow_html=True)
 
 
 def _mostrar_dataframe_completo(df):
