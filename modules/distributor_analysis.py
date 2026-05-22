@@ -639,6 +639,14 @@ def generar_analisis_distribuidora(
             df,
             proveedor=proveedor_detectado or proveedor,
             descuento_goteo_real=descuentos.get("goteo_real_pct"),
+            desglose=desglose,
+        )
+    else:
+        analisis_clubes = club_analysis.actualizar_referencia_descuento_clubes(
+            analisis_clubes,
+            df,
+            desglose=desglose,
+            descuento_goteo_real=descuentos.get("goteo_real_pct"),
         )
     if (
         (not analisis_clubes or not analisis_clubes.get("ok"))
@@ -651,9 +659,13 @@ def generar_analisis_distribuidora(
             bruto_clubes = float(pd.to_numeric(fila_clubes.iloc[0].get("bruto", 0), errors="coerce") or 0)
             lineas_clubes = int(pd.to_numeric(fila_clubes.iloc[0].get("lineas", 0), errors="coerce") or 0)
             if bruto_clubes > 0 or lineas_clubes > 0:
-                descuento_goteo = club_analysis.calcular_descuento_habitual_especialidad(df)
-                if descuento_goteo is None:
-                    descuento_goteo = descuentos.get("goteo_real_pct")
+                referencia_club = club_analysis.calcular_descuento_referencia_clubes(
+                    df,
+                    desglose=desglose,
+                    compra_club_sin_liquidacion=bruto_clubes,
+                    descuento_fallback=descuentos.get("goteo_real_pct"),
+                )
+                descuento_goteo = referencia_club.get("descuento_pct")
                 perdida_vs_goteo = 0.0
                 alertas = ["Falta documento de escalados/liquidaciones para calcular perdida real."]
                 if descuento_goteo is None:
@@ -674,6 +686,10 @@ def generar_analisis_distribuidora(
                     "alertas": alertas,
                     "detalle_club": pd.DataFrame(),
                     "descuento_habitual_referencia_pct": descuento_goteo,
+                    "descuento_habitual_referencia_metodo": referencia_club.get("metodo"),
+                    "descuento_aparente_especialidad_pct": referencia_club.get("descuento_aparente_especialidad_pct"),
+                    "cargos_especialidad_referencia": referencia_club.get("cargos_especialidad"),
+                    "compra_club_simulada_referencia": referencia_club.get("compra_club_simulada"),
                 }
     especialidad_cara = calcular_especialidad_cara(df)
     parafarmacia_financiada = calcular_parafarmacia_financiada(df)

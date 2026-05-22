@@ -4,6 +4,7 @@ import re
 import importlib
 import unicodedata
 import io
+import html
 
 from modules.ingestion import load_excel
 from modules.parser import parse_sections
@@ -113,6 +114,69 @@ def _buscar_columna_albaran(columnas):
 
 def _guardar_dataset(clave, df):
     st.session_state[clave] = df
+
+
+def _inyectar_estilos_dashboard():
+    st.markdown(
+        """
+        <style>
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 14px;
+            margin: 12px 0 22px 0;
+        }
+        .kpi-card {
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            background: rgba(31, 41, 55, 0.52);
+            border-radius: 8px;
+            padding: 16px 18px;
+            min-height: 96px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+        }
+        .kpi-label {
+            color: rgba(226, 232, 240, 0.82);
+            font-size: 0.82rem;
+            font-weight: 650;
+            margin-bottom: 10px;
+            line-height: 1.2;
+        }
+        .kpi-value {
+            color: #ffffff;
+            font-size: 1.88rem;
+            font-weight: 700;
+            line-height: 1.05;
+            letter-spacing: 0;
+            white-space: nowrap;
+        }
+        .kpi-note {
+            color: rgba(148, 163, 184, 0.88);
+            font-size: 0.76rem;
+            margin-top: 8px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _tarjetas_metricas(metricas):
+    tarjetas = []
+    for metrica in metricas:
+        etiqueta = html.escape(str(metrica.get("label", "")))
+        valor = html.escape(str(metrica.get("value", "")))
+        nota = html.escape(str(metrica.get("note", "")))
+        nota_html = f'<div class="kpi-note">{nota}</div>' if nota else ""
+        tarjetas.append(
+            f"""
+            <div class="kpi-card">
+                <div class="kpi-label">{etiqueta}</div>
+                <div class="kpi-value">{valor}</div>
+                {nota_html}
+            </div>
+            """
+        )
+    st.markdown(f'<div class="kpi-grid">{"".join(tarjetas)}</div>', unsafe_allow_html=True)
 
 
 def _mostrar_dataframe_completo(df):
@@ -734,17 +798,18 @@ def _mostrar_vistas_albaranes(df):
 
         descuento = (total_bruto - total_neto) / total_bruto * 100 if total_bruto else 0
 
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-
-        c1.metric("Líneas", len(df_tipo))
-        c2.metric("Unidades", int(df_tipo["unidades"].sum()))
-        c3.metric("Bruto", f"{total_bruto:.1f} €")
-        c4.metric("Neto", f"{total_neto:.1f} €")
-        c5.metric("Desc %", round(descuento, 2))
-        c6.metric("Abonos", f"{abs(total_abonos):.1f} €")
-
         bases_iva = _calcular_bases_iva_albaranes(df_tipo)
-        _mostrar_metricas_bases_iva(bases_iva)
+        _tarjetas_metricas([
+            {"label": "Líneas", "value": len(df_tipo)},
+            {"label": "Unidades", "value": int(df_tipo["unidades"].sum())},
+            {"label": "Bruto", "value": f"{total_bruto:.1f} €"},
+            {"label": "Neto", "value": f"{total_neto:.1f} €"},
+            {"label": "Desc %", "value": f"{descuento:.2f}%"},
+            {"label": "Abonos", "value": f"{abs(total_abonos):.1f} €"},
+            {"label": "Base IVA 4%", "value": f"{bases_iva['base_iva_4']:.2f} €"},
+            {"label": "Base IVA 10%", "value": f"{bases_iva['base_iva_10']:.2f} €"},
+            {"label": "Base IVA 21%", "value": f"{bases_iva['base_iva_21']:.2f} €"},
+        ])
 
         etiqueta = "Ver detalle compras goteo" if tipo == "goteo" else "Ver detalle compras transfer"
         with st.expander(etiqueta, expanded=False):
@@ -767,15 +832,26 @@ def _mostrar_analisis_clubes(analisis_clubes):
         return
 
     st.subheader("Análisis de clubes y escalados")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Compra total club", f"{analisis_clubes.get('compra_total_club', 0):.2f} €")
-    c2.metric("Compra sin liquidación", f"{analisis_clubes.get('compra_sin_liquidacion', 0):.2f} €")
-    c3.metric("% sin liquidación", f"{analisis_clubes.get('pct_club_sin_liquidacion', 0):.2f}%")
-    c4.metric("Pérdida estimada vs condición", f"{analisis_clubes.get('perdida_vs_descuento_habitual', 0):.2f} €")
+    _tarjetas_metricas([
+        {"label": "Compra total club", "value": f"{analisis_clubes.get('compra_total_club', 0):.2f} €"},
+        {"label": "Compra sin liquidación", "value": f"{analisis_clubes.get('compra_sin_liquidacion', 0):.2f} €"},
+        {"label": "% sin liquidación", "value": f"{analisis_clubes.get('pct_club_sin_liquidacion', 0):.2f}%"},
+        {
+            "label": "Pérdida estimada vs condición",
+            "value": f"{analisis_clubes.get('perdida_vs_descuento_habitual', 0):.2f} €",
+        },
+    ])
 
     descuento_ref = analisis_clubes.get("descuento_habitual_referencia_pct")
     if descuento_ref is not None:
-        st.caption(f"Referencia usada: descuento habitual de especialidad {float(descuento_ref):.2f}%.")
+        metodo_ref = analisis_clubes.get("descuento_habitual_referencia_metodo")
+        if metodo_ref == "descuento_real_simulado_especialidad_con_clubes":
+            st.caption(
+                "Referencia usada: descuento real simulado de especialidad "
+                f"{float(descuento_ref):.2f}% incorporando clubes sin liquidación y diluyendo cargos."
+            )
+        else:
+            st.caption(f"Referencia usada: descuento habitual de especialidad {float(descuento_ref):.2f}%.")
 
     for alerta in analisis_clubes.get("alertas", []):
         st.warning(alerta)
@@ -848,22 +924,30 @@ def _mostrar_analisis_distribuidora(analisis):
     resumen = analisis.get("resumen", {})
     st.subheader(f"Análisis distribuidora · {analisis.get('proveedor', '')}")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Compra bruta", f"{resumen.get('compra_bruta_total', 0):.2f} €")
-    c2.metric("Compra neta", f"{resumen.get('compra_neta_total', 0):.2f} €")
     gastos_resumen = analisis.get("gastos_resumen", {})
-    c3.metric("Gastos totales", f"{gastos_resumen.get('total_gastos', 0):.2f} €")
     descuento = resumen.get("descuento_medio_general")
-    c4.metric("Desc. medio", "-" if descuento is None else f"{descuento:.2f}%")
-
-    g1, g2, g3, g4, g5 = st.columns(5)
     volumen = analisis.get("volumen_compra", {})
-    g1.metric("Compra mensual", "-" if volumen.get("compra_total_mensual") is None else f"{volumen.get('compra_total_mensual'):.2f} €")
-    g2.metric("Abonos", f"{abs(float(resumen.get('abonos_totales', 0) or 0)):.2f} €")
-    g3.metric("% gastos/compra", f"{gastos_resumen.get('pct_gastos_sobre_compra', 0):.2f}%")
     descuentos = analisis.get("descuentos_reales", {})
-    g4.metric("Goteo aparente", "-" if descuentos.get("goteo_aparente_pct") is None else f"{descuentos.get('goteo_aparente_pct'):.2f}%")
-    g5.metric("Goteo real", "-" if descuentos.get("goteo_real_pct") is None else f"{descuentos.get('goteo_real_pct'):.2f}%")
+    _tarjetas_metricas([
+        {"label": "Compra bruta", "value": f"{resumen.get('compra_bruta_total', 0):.2f} €"},
+        {"label": "Compra neta", "value": f"{resumen.get('compra_neta_total', 0):.2f} €"},
+        {"label": "Gastos totales", "value": f"{gastos_resumen.get('total_gastos', 0):.2f} €"},
+        {"label": "Desc. medio", "value": "-" if descuento is None else f"{descuento:.2f}%"},
+        {
+            "label": "Compra mensual",
+            "value": "-" if volumen.get("compra_total_mensual") is None else f"{volumen.get('compra_total_mensual'):.2f} €",
+        },
+        {"label": "Abonos", "value": f"{abs(float(resumen.get('abonos_totales', 0) or 0)):.2f} €"},
+        {"label": "% gastos/compra", "value": f"{gastos_resumen.get('pct_gastos_sobre_compra', 0):.2f}%"},
+        {
+            "label": "Goteo aparente",
+            "value": "-" if descuentos.get("goteo_aparente_pct") is None else f"{descuentos.get('goteo_aparente_pct'):.2f}%",
+        },
+        {
+            "label": "Goteo real",
+            "value": "-" if descuentos.get("goteo_real_pct") is None else f"{descuentos.get('goteo_real_pct'):.2f}%",
+        },
+    ])
 
     periodo = resumen.get("periodo")
     if periodo:
@@ -886,16 +970,25 @@ def _mostrar_analisis_distribuidora(analisis):
     especialidad_cara_resumen = analisis.get("especialidad_cara_resumen", {})
     if especialidad_cara_resumen and especialidad_cara_resumen.get("lineas_detectadas", 0) > 0:
         st.subheader("Especialidad cara / RDL 4/2010")
-        ec1, ec2, ec3, ec4 = st.columns(4)
-        ec1.metric("Líneas", especialidad_cara_resumen.get("lineas_detectadas", 0))
-        ec2.metric("Unidades", f"{especialidad_cara_resumen.get('unidades', 0):.2f}")
-        ec3.metric("Bruto total", f"{especialidad_cara_resumen.get('bruto_total', 0):.2f} €")
-        ec4.metric("Neto total", f"{especialidad_cara_resumen.get('neto_total', 0):.2f} €")
-        ec5, ec6, ec7, ec8 = st.columns(4)
-        ec5.metric("Descuento total", f"{especialidad_cara_resumen.get('descuento_total_euros', 0):.2f} €")
-        ec6.metric("Desc. medio/línea", f"{especialidad_cara_resumen.get('descuento_medio_linea_euros', 0):.2f} €")
-        ec7.metric("Base IVA4 total", f"{especialidad_cara_resumen.get('base_iva4_total', 0):.2f} €")
-        ec8.metric("Base sujeta ajuste", f"{especialidad_cara_resumen.get('base_iva4_sujeta_ajuste', 0):.2f} €")
+        _tarjetas_metricas([
+            {"label": "Líneas", "value": especialidad_cara_resumen.get("lineas_detectadas", 0)},
+            {"label": "Unidades", "value": f"{especialidad_cara_resumen.get('unidades', 0):.2f}"},
+            {"label": "Bruto total", "value": f"{especialidad_cara_resumen.get('bruto_total', 0):.2f} €"},
+            {"label": "Neto total", "value": f"{especialidad_cara_resumen.get('neto_total', 0):.2f} €"},
+            {
+                "label": "Descuento total",
+                "value": f"{especialidad_cara_resumen.get('descuento_total_euros', 0):.2f} €",
+            },
+            {
+                "label": "Desc. medio/línea",
+                "value": f"{especialidad_cara_resumen.get('descuento_medio_linea_euros', 0):.2f} €",
+            },
+            {"label": "Base IVA4 total", "value": f"{especialidad_cara_resumen.get('base_iva4_total', 0):.2f} €"},
+            {
+                "label": "Base sujeta ajuste",
+                "value": f"{especialidad_cara_resumen.get('base_iva4_sujeta_ajuste', 0):.2f} €",
+            },
+        ])
         st.dataframe(pd.DataFrame([{
             "base_iva4_total": especialidad_cara_resumen.get("base_iva4_total", 0),
             "base_iva4_especialidad_cara": especialidad_cara_resumen.get("base_iva4_especialidad_cara", 0),
@@ -906,16 +999,16 @@ def _mostrar_analisis_distribuidora(analisis):
     resumen_para_fin = parafarmacia_financiada.get("resumen", {})
     if resumen_para_fin and resumen_para_fin.get("lineas_detectadas", 0) > 0:
         st.subheader("Parafarmacia financiada")
-        pf1, pf2, pf3, pf4 = st.columns(4)
-        pf1.metric("Líneas", resumen_para_fin.get("lineas_detectadas", 0))
-        pf2.metric("Unidades", f"{resumen_para_fin.get('unidades', 0):.2f}")
-        pf3.metric("Bruto total", f"{resumen_para_fin.get('bruto_total', 0):.2f} €")
-        pf4.metric("Neto total", f"{resumen_para_fin.get('neto_total', 0):.2f} €")
-        pf5, pf6, pf7, pf8 = st.columns(4)
-        pf5.metric("Descuento total", f"{resumen_para_fin.get('descuento_total_euros', 0):.2f} €")
-        pf6.metric("Desc. medio", f"{resumen_para_fin.get('descuento_medio_euros', 0):.2f} €")
-        pf7.metric("% compra total", f"{resumen_para_fin.get('porcentaje_sobre_compra_total', 0):.2f}%")
-        pf8.metric("% parafarmacia", f"{resumen_para_fin.get('porcentaje_sobre_parafarmacia_total', 0):.2f}%")
+        _tarjetas_metricas([
+            {"label": "Líneas", "value": resumen_para_fin.get("lineas_detectadas", 0)},
+            {"label": "Unidades", "value": f"{resumen_para_fin.get('unidades', 0):.2f}"},
+            {"label": "Bruto total", "value": f"{resumen_para_fin.get('bruto_total', 0):.2f} €"},
+            {"label": "Neto total", "value": f"{resumen_para_fin.get('neto_total', 0):.2f} €"},
+            {"label": "Descuento total", "value": f"{resumen_para_fin.get('descuento_total_euros', 0):.2f} €"},
+            {"label": "Desc. medio", "value": f"{resumen_para_fin.get('descuento_medio_euros', 0):.2f} €"},
+            {"label": "% compra total", "value": f"{resumen_para_fin.get('porcentaje_sobre_compra_total', 0):.2f}%"},
+            {"label": "% parafarmacia", "value": f"{resumen_para_fin.get('porcentaje_sobre_parafarmacia_total', 0):.2f}%"},
+        ])
         st.dataframe(pd.DataFrame([{
             "base_parafarmacia_total": resumen_para_fin.get("base_parafarmacia_total", 0),
             "base_parafarmacia_financiada": resumen_para_fin.get("base_parafarmacia_financiada", 0),
@@ -2093,6 +2186,7 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
                 df_liquidaciones=analisis_clubes.get("escalados"),
                 proveedor=proveedor_id,
                 descuento_goteo_real=descuento_calculado,
+                desglose=analisis.get("desglose_por_tipo"),
             )
         _guardar_analisis_distribuidora(proveedor_id, analisis)
 
@@ -3133,6 +3227,7 @@ def render_vida_pharma():
                 df_liquidaciones=analisis_clubes.get("escalados"),
                 proveedor="bidafarma",
                 descuento_goteo_real=descuento_calculado,
+                desglose=analisis.get("desglose_por_tipo"),
             )
         _guardar_analisis_distribuidora("bidafarma", analisis)
 
@@ -3241,6 +3336,7 @@ def render_contexto_farmacia():
 
 st.set_page_config(layout="wide")
 st.title("📊 Auditoría de Compras Farmacia")
+_inyectar_estilos_dashboard()
 
 _verificar_acceso_app()
 _asegurar_maestros_en_sesion()

@@ -158,15 +158,90 @@ def calcular_descuento_habitual_especialidad(df_compras):
     if base.empty:
         return None
 
-    descuentos = ((bruto[mask] - neto[mask]) / bruto[mask] * 100).round(2)
-    descuentos = descuentos[(descuentos > 0) & (descuentos < 100)]
-    if descuentos.empty:
+    bruto_total = float(bruto[mask].sum())
+    neto_total = float(neto[mask].sum())
+    if bruto_total <= 0:
         return None
 
-    moda = descuentos.mode()
-    if not moda.empty:
-        return round(float(moda.iloc[0]), 2)
-    return round(float(descuentos.median()), 2)
+    descuento = (1 - (neto_total / bruto_total)) * 100
+    if descuento <= 0 or descuento >= 100:
+        return None
+    return round(float(descuento), 2)
+
+
+def _valor_desglose(desglose, bloque, columna):
+    if desglose is None or desglose.empty or "bloque" not in desglose.columns or columna not in desglose.columns:
+        return None
+    fila = desglose[desglose["bloque"].astype(str).str.lower().eq(bloque)]
+    if fila.empty:
+        return None
+    valor = pd.to_numeric(pd.Series([fila.iloc[0].get(columna)]), errors="coerce").iloc[0]
+    return None if pd.isna(valor) else float(valor)
+
+
+def calcular_descuento_referencia_clubes(
+    df_compras,
+    desglose=None,
+    compra_club_sin_liquidacion=0.0,
+    descuento_fallback=None,
+):
+    bruto_especialidad = _valor_desglose(desglose, "especialidad", "bruto")
+    neto_especialidad = _valor_desglose(desglose, "especialidad", "neto")
+    cargos_especialidad = _valor_desglose(desglose, "especialidad", "cargos_imputados") or 0.0
+    aparente_especialidad = _valor_desglose(desglose, "especialidad", "descuento_aparente_pct")
+    real_especialidad = _valor_desglose(desglose, "especialidad", "descuento_real_final_pct")
+
+    if bruto_especialidad and bruto_especialidad > 0:
+        if aparente_especialidad is None and neto_especialidad is not None:
+            aparente_especialidad = (1 - (neto_especialidad / bruto_especialidad)) * 100
+
+        if abs(cargos_especialidad) <= 0.0001:
+            referencia = aparente_especialidad
+            metodo = "descuento_aparente_especialidad"
+        else:
+            club_bruto = max(0.0, float(compra_club_sin_liquidacion or 0.0))
+            aparente = float(aparente_especialidad or 0.0)
+            club_neto_simulado = club_bruto * (1 - aparente / 100)
+            bruto_simulado = bruto_especialidad + club_bruto
+            coste_simulado = float(neto_especialidad or 0.0) + club_neto_simulado + cargos_especialidad
+            referencia = (1 - (coste_simulado / bruto_simulado)) * 100 if bruto_simulado else real_especialidad
+            metodo = "descuento_real_simulado_especialidad_con_clubes"
+
+        if referencia is not None:
+            return {
+                "descuento_pct": round(float(referencia), 2),
+                "metodo": metodo,
+                "descuento_aparente_especialidad_pct": None if aparente_especialidad is None else round(float(aparente_especialidad), 2),
+                "cargos_especialidad": round(float(cargos_especialidad), 2),
+                "compra_club_simulada": round(float(compra_club_sin_liquidacion or 0.0), 2),
+            }
+
+    descuento_agregado = calcular_descuento_habitual_especialidad(df_compras)
+    if descuento_agregado is not None:
+        return {
+            "descuento_pct": descuento_agregado,
+            "metodo": "descuento_agregado_especialidad",
+            "descuento_aparente_especialidad_pct": descuento_agregado,
+            "cargos_especialidad": 0.0,
+            "compra_club_simulada": round(float(compra_club_sin_liquidacion or 0.0), 2),
+        }
+
+    if descuento_fallback is not None:
+        return {
+            "descuento_pct": round(float(descuento_fallback), 2),
+            "metodo": "descuento_fallback_goteo_real",
+            "descuento_aparente_especialidad_pct": None,
+            "cargos_especialidad": 0.0,
+            "compra_club_simulada": round(float(compra_club_sin_liquidacion or 0.0), 2),
+        }
+
+    return {
+        "descuento_pct": None,
+        "metodo": "sin_referencia",
+        "descuento_aparente_especialidad_pct": None,
+        "cargos_especialidad": 0.0,
+        "compra_club_simulada": round(float(compra_club_sin_liquidacion or 0.0), 2),
+    }
 
 
 def normalizar_documento_clubes(df):
@@ -326,12 +401,47 @@ def generar_resumen_clubes(
     }
 
 
-def analizar_clubes(df_compras, df_escalados=None, df_liquidaciones=None, proveedor=None, descuento_goteo_real=None):
+def actualizar_referencia_descuento_clubes(
+    analisis_clubes,
+    df_compras,
+    desglose=None,
+    descuento_goteo_real=None,
+):
+    if not analisis_clubes or not analisis_clubes.get("ok"):
+        return analisis_clubes
+
+    actualizado = dict(analisis_clubes)
+    compra_sin_liquidacion = float(actualizado.get("compra_sin_liquidacion", 0) or 0)
+    referencia = calcular_descuento_referencia_clubes(
+        df_compras,
+        desglose=desglose,
+        compra_club_sin_liquidacion=compra_sin_liquidacion,
+        descuento_fallback=descuento_goteo_real,
+    )
+    descuento_habitual = referencia.get("descuento_pct")
+    actualizado["descuento_habitual_referencia_pct"] = descuento_habitual
+    actualizado["descuento_habitual_referencia_metodo"] = referencia.get("metodo")
+    actualizado["descuento_aparente_especialidad_pct"] = referencia.get("descuento_aparente_especialidad_pct")
+    actualizado["cargos_especialidad_referencia"] = referencia.get("cargos_especialidad")
+    actualizado["compra_club_simulada_referencia"] = referencia.get("compra_club_simulada")
+    actualizado["perdida_vs_descuento_habitual"] = (
+        0.0
+        if descuento_habitual is None
+        else round(compra_sin_liquidacion * (float(descuento_habitual) / 100), 2)
+    )
+    return actualizado
+
+
+def analizar_clubes(
+    df_compras,
+    df_escalados=None,
+    df_liquidaciones=None,
+    proveedor=None,
+    descuento_goteo_real=None,
+    desglose=None,
+):
     df_club = detectar_compras_club(df_compras)
     alertas = []
-    descuento_habitual = calcular_descuento_habitual_especialidad(df_compras)
-    if descuento_habitual is None:
-        descuento_habitual = descuento_goteo_real
 
     if df_club.empty:
         return {
@@ -369,6 +479,13 @@ def analizar_clubes(df_compras, df_escalados=None, df_liquidaciones=None, provee
         ).fillna(False).astype(bool)
     ].copy()
 
+    referencia = calcular_descuento_referencia_clubes(
+        df_compras,
+        desglose=desglose,
+        compra_club_sin_liquidacion=compra_sin_liquidacion,
+        descuento_fallback=descuento_goteo_real,
+    )
+    descuento_habitual = referencia.get("descuento_pct")
     perdida_vs_goteo = calcular_perdida_vs_descuento_habitual(
         club_sin_liquidacion,
         descuento_habitual,
@@ -393,4 +510,8 @@ def analizar_clubes(df_compras, df_escalados=None, df_liquidaciones=None, provee
         ),
         "detalle_club": df_club_marcado,
         "descuento_habitual_referencia_pct": descuento_habitual,
+        "descuento_habitual_referencia_metodo": referencia.get("metodo"),
+        "descuento_aparente_especialidad_pct": referencia.get("descuento_aparente_especialidad_pct"),
+        "cargos_especialidad_referencia": referencia.get("cargos_especialidad"),
+        "compra_club_simulada_referencia": referencia.get("compra_club_simulada"),
     }
