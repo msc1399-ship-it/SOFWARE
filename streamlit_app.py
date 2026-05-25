@@ -5,6 +5,8 @@ import importlib
 import unicodedata
 import io
 import html
+import json
+from pathlib import Path
 
 from modules.ingestion import load_excel
 from modules.parser import parse_sections
@@ -27,6 +29,10 @@ import modules.distributor_analysis as distributor_analysis
 import modules.parafarmacia as parafarmacia
 import modules.transfer_manual_mapping as transfer_manual_mapping
 import modules.maestros_persistentes as maestros_persistentes
+import modules.bandeja_documental as bandeja_documental
+from modules.bandeja_documental_inbox import AdjuntoEntrante, EmailEntrante, procesar_email_entrante
+from modules.bandeja_documental_repository import BandejaDocumentalRepository
+from modules.bandeja_documental_service import BandejaDocumentalService
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -44,6 +50,7 @@ distributor_analysis = importlib.reload(distributor_analysis)
 parafarmacia = importlib.reload(parafarmacia)
 transfer_manual_mapping = importlib.reload(transfer_manual_mapping)
 maestros_persistentes = importlib.reload(maestros_persistentes)
+bandeja_documental = importlib.reload(bandeja_documental)
 
 try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
@@ -58,6 +65,7 @@ PROVEEDORES_BASE = {
 }
 
 SECCIONES = [
+    "Bandeja documental",
     "bidafarma",
     "cofares",
     "alliance",
@@ -3427,6 +3435,324 @@ def render_contexto_farmacia():
     ])
     st.caption("Resumen visual del contexto preparado para futuras propuestas de pedido")
     st.dataframe(resumen, hide_index=True)
+    
+
+def _bd_service():
+    if "bandeja_documental_service" not in st.session_state:
+        repo = BandejaDocumentalRepository("data/bandeja_documental.db")
+        st.session_state["bandeja_documental_service"] = BandejaDocumentalService(repo=repo)
+    return st.session_state["bandeja_documental_service"]
+
+
+def _bd_estado_badge(estado):
+    colores = {
+        bandeja_documental.EstadoExpediente.ERROR_DOCUMENTAL.value: "#dc2626",
+        bandeja_documental.EstadoExpediente.DOCUMENTACION_INCOMPLETA.value: "#dc2626",
+        bandeja_documental.EstadoExpediente.PENDIENTE_DOCUMENTACION.value: "#ca8a04",
+        bandeja_documental.EstadoExpediente.PENDIENTE_REVISION.value: "#ca8a04",
+        bandeja_documental.EstadoExpediente.DOCUMENTACION_RECIBIDA.value: "#2563eb",
+        bandeja_documental.EstadoExpediente.LISTO_ANALISIS.value: "#16a34a",
+    }
+    color = colores.get(estado, "#64748b")
+    return (
+        f"<span style='display:inline-block;background:{color};color:white;"
+        "padding:4px 10px;border-radius:8px;font-weight:700;font-size:0.82rem'>"
+        f"{html.escape(str(estado))}</span>"
+    )
+
+
+def _bd_format_bytes(num):
+    try:
+        num = float(num or 0)
+    except Exception:
+        return "0 B"
+    for unit in ["B", "KB", "MB", "GB"]:
+        if num < 1024:
+            return f"{num:.0f} {unit}" if unit == "B" else f"{num:.1f} {unit}"
+        num /= 1024
+    return f"{num:.1f} TB"
+
+
+def render_bandeja_documental():
+    service = _bd_service()
+    repo = service.repo
+
+    st.header("Bandeja documental")
+    st.caption("Recepcion, organizacion y trazabilidad documental. Gmail y motor de analisis siguen desacoplados.")
+
+    expedientes = repo.list_expedientes()
+    documentos = repo.list_documentos()
+    errores_pendientes = repo.count_errores_pendientes()
+    hoy = bandeja_documental.ahora_iso()[:10]
+    docs_hoy = [doc for doc in documentos if str(doc.get("fecha_recepcion", "")).startswith(hoy)]
+    abiertos = [
+        exp for exp in expedientes
+        if exp["estado"] not in {
+            bandeja_documental.EstadoExpediente.ANALIZADO.value,
+            bandeja_documental.EstadoExpediente.LISTO_ANALISIS.value,
+        }
+    ]
+    listos = [exp for exp in expedientes if exp["estado"] == bandeja_documental.EstadoExpediente.LISTO_ANALISIS.value]
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Expedientes abiertos", len(abiertos))
+    k2.metric("Listos para analisis", len(listos))
+    k3.metric("Errores pendientes", errores_pendientes)
+    k4.metric("Documentos hoy", len(docs_hoy))
+
+    with st.expander("Crear expediente manual", expanded=False):
+        c1, c2, c3 = st.columns([2, 1, 1])
+        asunto = c1.text_input("Asunto normalizado", placeholder="ASESORIA_2T_2026_FARMACIA_SAN_MIGUEL")
+        cliente = c2.text_input("Cliente", placeholder="Cliente / farmacia")
+        remitente = c3.text_input("Email remitente", placeholder="cliente@farmacia.com")
+        if st.button("Crear o actualizar expediente", type="primary"):
+            try:
+                expediente_id = service.crear_expediente_desde_asunto(asunto, cliente, remitente)
+                st.success(f"Expediente listo: {expediente_id}")
+                st.rerun()
+            except Exception as error:
+                st.error(str(error))
+
+    with st.expander("Simular email entrante", expanded=False):
+        e1, e2 = st.columns(2)
+        email_asunto = e1.text_input("Asunto email", key="bd_email_asunto", placeholder="ASESORIA_2T_2026_FARMACIA_SAN_MIGUEL")
+        email_remitente = e2.text_input("Remitente", key="bd_email_remitente", placeholder="cliente@farmacia.com")
+        e3, e4 = st.columns(2)
+        message_id = e3.text_input("Message ID", key="bd_message_id", value=f"manual-{bandeja_documental.ahora_iso()}")
+        thread_id = e4.text_input("Thread ID", key="bd_thread_id", value="thread-simulado")
+        email_files = st.file_uploader(
+            "Adjuntos simulados",
+            type=["xlsx", "xls", "csv", "pdf", "zip"],
+            accept_multiple_files=True,
+            key="bd_email_files",
+        )
+        if st.button("Procesar email simulado"):
+            email = EmailEntrante(
+                message_id=message_id,
+                thread_id=thread_id,
+                asunto=email_asunto,
+                remitente_email=email_remitente,
+                adjuntos=[
+                    AdjuntoEntrante(archivo.name, archivo.getvalue(), getattr(archivo, "type", ""))
+                    for archivo in email_files
+                ],
+            )
+            resultado = procesar_email_entrante(email, cliente_nombre=email_remitente, service=service)
+            st.json(resultado.to_dict())
+            st.rerun()
+
+    st.subheader("Expedientes")
+    f1, f2, f3 = st.columns([1, 1, 1])
+    estados = ["Todos"] + sorted({str(exp["estado"]) for exp in expedientes})
+    filtro_estado = f1.selectbox("Filtrar por estado", estados)
+    busqueda = f2.text_input("Buscar farmacia")
+    orden_desc = f3.checkbox("Ordenar por fecha reciente", value=True)
+
+    expedientes_filtrados = expedientes
+    if filtro_estado != "Todos":
+        expedientes_filtrados = [exp for exp in expedientes_filtrados if exp["estado"] == filtro_estado]
+    if busqueda:
+        expedientes_filtrados = [
+            exp for exp in expedientes_filtrados
+            if busqueda.lower() in str(exp["farmacia"]).lower()
+        ]
+    expedientes_filtrados = sorted(
+        expedientes_filtrados,
+        key=lambda exp: str(exp.get("fecha_ultima_actualizacion", "")),
+        reverse=orden_desc,
+    )
+
+    expediente_id = None
+    if expedientes_filtrados:
+        filas = []
+        for exp in expedientes_filtrados:
+            docs_exp = repo.list_documentos(exp["expediente_id"], include_deleted=False)
+            filas.append(
+                {
+                    "ID expediente": exp["expediente_id"],
+                    "Farmacia": exp["farmacia"],
+                    "Cliente": exp["cliente"],
+                    "Servicio": exp["tipo_servicio"],
+                    "Periodo": f"{exp['periodo']} {exp['ano']}",
+                    "Estado": exp["estado"],
+                    "Fecha actualizacion": exp["fecha_ultima_actualizacion"],
+                    "N documentos": len(docs_exp),
+                    "Errores pendientes": repo.count_errores_pendientes(exp["expediente_id"]),
+                }
+            )
+        st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
+        opciones = {
+            f"{exp['farmacia']} | {exp['tipo_servicio']} {exp['periodo']} {exp['ano']}": exp["expediente_id"]
+            for exp in expedientes_filtrados
+        }
+        seleccionado = st.selectbox("Abrir detalle de expediente", list(opciones.keys()))
+        expediente_id = opciones[seleccionado]
+    else:
+        st.info("No hay expedientes con estos filtros.")
+
+    if expediente_id:
+        exp = repo.get_expediente(expediente_id)
+        docs = repo.list_documentos(expediente_id)
+        errores = repo.list_errores(expediente_id)
+        eventos = repo.list_eventos(expediente_id)
+
+        st.divider()
+        st.subheader("Detalle expediente")
+        d1, d2, d3 = st.columns([2, 1, 1])
+        d1.markdown(_bd_estado_badge(exp["estado"]), unsafe_allow_html=True)
+        d1.write(f"**Farmacia:** {exp['farmacia']}  \n**Cliente:** {exp['cliente']}  \n**Email:** {exp.get('email_remitente', '')}")
+        d2.write(f"**Servicio:** {exp['tipo_servicio']}  \n**Periodo:** {exp['periodo']}  \n**Ano:** {exp['ano']}")
+        d3.write("**Checklist obligatorio**")
+        d3.write(", ".join(bandeja_documental.checklist_para_servicio(exp["tipo_servicio"])) or "Sin checklist")
+
+        faltantes = exp.get("documentos_faltantes", [])
+        if faltantes:
+            st.warning("Documentos faltantes: " + ", ".join(faltantes))
+        else:
+            st.success("Checklist obligatorio completo.")
+
+        a1, a2, a3 = st.columns(3)
+        if a1.button("Recalcular checklist"):
+            with st.spinner("Recalculando expediente..."):
+                nuevo_estado = service.recalcular_checklist_y_estado(expediente_id)
+            st.success(f"Estado actualizado: {nuevo_estado}")
+            st.rerun()
+        if a2.button("Marcar como Listo para analisis"):
+            ok, motivos = service.marcar_listo_para_analisis(expediente_id)
+            if ok:
+                st.success("Expediente marcado como Listo para analisis.")
+                st.rerun()
+            else:
+                st.error("No se puede marcar como listo: " + " | ".join(motivos))
+        if a3.button("Generar preview payload"):
+            try:
+                st.session_state["bd_payload_preview"] = service.preparar_payload_para_analisis(expediente_id)
+            except Exception as error:
+                st.error(str(error))
+
+        if st.session_state.get("bd_payload_preview", {}).get("expediente_id") == expediente_id:
+            st.json(st.session_state["bd_payload_preview"])
+
+        st.subheader("Subida de documentos")
+        archivos = st.file_uploader(
+            "Arrastra o selecciona archivos",
+            type=["xlsx", "xls", "csv", "pdf", "zip"],
+            accept_multiple_files=True,
+            key=f"bd_uploader_{expediente_id}",
+        )
+        if st.button("Procesar archivos subidos", disabled=not archivos):
+            with st.spinner("Guardando documentos y recalculando estado..."):
+                resultado = service.registrar_subida_manual(
+                    expediente_id,
+                    [(archivo.name, archivo.getvalue()) for archivo in archivos],
+                )
+            if resultado["registrados"]:
+                st.success("Registrados: " + ", ".join(resultado["registrados"]))
+            if resultado["duplicados"]:
+                st.warning("Duplicados: " + ", ".join(resultado["duplicados"]))
+            if resultado["errores"]:
+                st.error("Con errores: " + ", ".join(resultado["errores"]))
+            st.rerun()
+
+        st.subheader("Documentos")
+        if docs:
+            tabla_docs = pd.DataFrame(
+                [
+                    {
+                        "ID": doc["id_documento"],
+                        "Nombre original": doc["nombre_original"],
+                        "Tipo": doc["tipo_documental"],
+                        "Estado": doc["estado_documento"],
+                        "Tamano": _bd_format_bytes(doc["tamano_bytes"]),
+                        "Hash": str(doc["hash_archivo"])[:10],
+                        "Fecha": doc["fecha_recepcion"],
+                        "Origen": doc["origen"],
+                        "Ruta": doc["ruta_archivo"],
+                    }
+                    for doc in docs
+                ]
+            )
+            st.dataframe(tabla_docs, hide_index=True, use_container_width=True)
+            doc_opciones = {f"{doc['nombre_original']} ({doc['estado_documento']})": doc["id_documento"] for doc in docs}
+            doc_sel = st.selectbox("Documento para accion", list(doc_opciones.keys()))
+            motivo_doc = st.text_input("Motivo / observacion documento", key=f"bd_motivo_doc_{expediente_id}")
+            b1, b2, b3 = st.columns(3)
+            if b1.button("Marcar incorrecto"):
+                service.marcar_documento_incorrecto(expediente_id, doc_opciones[doc_sel], motivo_doc or "Marcado desde UI")
+                st.rerun()
+            if b2.button("Soft delete"):
+                service.soft_delete_documento(expediente_id, doc_opciones[doc_sel], motivo_doc or "Eliminado desde UI")
+                st.rerun()
+            doc_actual = next((doc for doc in docs if doc["id_documento"] == doc_opciones[doc_sel]), None)
+            if doc_actual and Path(str(doc_actual.get("ruta_archivo", ""))).exists():
+                b3.download_button(
+                    "Descargar archivo",
+                    data=Path(str(doc_actual["ruta_archivo"])).read_bytes(),
+                    file_name=doc_actual["nombre_original"],
+                )
+        else:
+            st.info("Todavia no hay documentos registrados.")
+
+        o1, o2 = st.columns(2)
+        with o1:
+            st.subheader("Errores de ingestion")
+            if errores:
+                for error in errores:
+                    estado_error = "resuelto" if error["resuelto"] else "pendiente"
+                    st.write(f"**#{error['id_error']} {estado_error}** - {error['motivo_error']} - {error['nombre_archivo']}")
+                    st.caption(error.get("detalle", ""))
+                    if not error["resuelto"] and st.button(f"Marcar error {error['id_error']} resuelto"):
+                        repo.marcar_error_resuelto(error["id_error"])
+                        repo.add_evento(expediente_id, "error_ingestion_resuelto", f"Error {error['id_error']} resuelto", "usuario")
+                        service.recalcular_checklist_y_estado(expediente_id)
+                        st.rerun()
+            else:
+                st.info("Sin errores asociados.")
+        with o2:
+            st.subheader("Observaciones internas")
+            nuevas_obs = st.text_area("Observaciones", value=str(exp.get("observaciones", "")), height=120)
+            if st.button("Guardar observaciones"):
+                repo.update_expediente_fields(expediente_id, observaciones=nuevas_obs)
+                repo.add_evento(expediente_id, "observacion_anadida", nuevas_obs, "usuario")
+                st.success("Observaciones guardadas.")
+                st.rerun()
+
+        st.subheader("Historial")
+        if eventos:
+            st.dataframe(pd.DataFrame(eventos), hide_index=True, use_container_width=True)
+        else:
+            st.info("Sin eventos todavia.")
+
+        st.subheader("Exportacion y administracion tecnica")
+        t1, t2, t3 = st.columns(3)
+        export_data = service.exportar_expediente_json(expediente_id)
+        t1.download_button(
+            "Exportar JSON",
+            data=json.dumps(export_data, ensure_ascii=False, indent=2),
+            file_name=f"{expediente_id}.json",
+            mime="application/json",
+        )
+        zip_path = service.exportar_expediente_zip(expediente_id)
+        t2.download_button(
+            "Exportar ZIP",
+            data=zip_path.read_bytes(),
+            file_name=zip_path.name,
+            mime="application/zip",
+        )
+        if t3.button("Ejecutar diagnostico FS/DB"):
+            st.session_state["bd_diagnostico"] = service.diagnostico_integridad()
+        if "bd_diagnostico" in st.session_state:
+            st.json(st.session_state["bd_diagnostico"])
+
+    with st.expander("Panel tecnico global", expanded=False):
+        stats = repo.stats()
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("DB expedientes", stats["expedientes"])
+        c2.metric("DB documentos", stats["documentos"])
+        c3.metric("Errores", stats["errores"])
+        c4.metric("Emails procesados", stats["emails_procesados"])
+        c5.metric("Storage", _bd_format_bytes(service.storage_size_bytes()))
+        st.caption("Motor analitico y Gmail real no se ejecutan desde esta pantalla.")
 
 
 st.set_page_config(layout="wide")
@@ -3455,7 +3781,9 @@ with st.sidebar:
 
 st.divider()
 
-if seccion_activa == "bidafarma":
+if seccion_activa == "Bandeja documental":
+    render_bandeja_documental()
+elif seccion_activa == "bidafarma":
     render_vida_pharma()
 elif seccion_activa in PROVEEDORES_BASE:
     render_proveedor_base(seccion_activa, PROVEEDORES_BASE[seccion_activa])
