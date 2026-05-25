@@ -25,6 +25,7 @@ import modules.ai_advisor as ai_advisor
 import modules.club_analysis as club_analysis
 import modules.distributor_analysis as distributor_analysis
 import modules.parafarmacia as parafarmacia
+import modules.bidafarma_special_orders as bidafarma_special_orders
 import modules.transfer_manual_mapping as transfer_manual_mapping
 import modules.maestros_persistentes as maestros_persistentes
 
@@ -42,6 +43,7 @@ ai_advisor = importlib.reload(ai_advisor)
 club_analysis = importlib.reload(club_analysis)
 distributor_analysis = importlib.reload(distributor_analysis)
 parafarmacia = importlib.reload(parafarmacia)
+bidafarma_special_orders = importlib.reload(bidafarma_special_orders)
 transfer_manual_mapping = importlib.reload(transfer_manual_mapping)
 maestros_persistentes = importlib.reload(maestros_persistentes)
 
@@ -336,6 +338,8 @@ def _vista_compras_ligera(df):
         "seccion_albaran",
         "tipo_compra",
         "categoria",
+        "tipo_albaran_bidafarma",
+        "categoria_pedido_especial_bidafarma",
         "unidades",
         "bruto",
         columna_descuento_cargo,
@@ -415,11 +419,30 @@ def _filtrar_archivos_validos(uploaded_files, etiqueta="archivo", extensiones=("
 
 def _aplicar_clasificaciones_transversales(df, df_nomenclator=None):
     df = clasificar_especialidad_cara(df)
-    return detectar_parafarmacia_financiada(df, df_nomenclator=df_nomenclator)
+    df = detectar_parafarmacia_financiada(df, df_nomenclator=df_nomenclator)
+    proveedor = df.get("proveedor", pd.Series("", index=df.index)).astype(str).str.lower() if df is not None and not df.empty else pd.Series(dtype="object")
+    if not proveedor.empty and proveedor.str.contains("bidafarma|vida|vidapharma|vida pharma", na=False).any():
+        df = bidafarma_special_orders.clasificar_pedidos_especiales_bidafarma(df)
+    return df
 
 
 def _mostrar_tarjeta_parafarmacia_financiada(df):
     return
+
+
+def _mostrar_tarjeta_pedidos_especiales_bidafarma(df):
+    if df is None or df.empty or "es_pedido_especial_bidafarma" not in df.columns:
+        return
+    mask = df["es_pedido_especial_bidafarma"].fillna(False).astype(bool)
+    if not mask.any():
+        return
+    parte = df[mask].copy()
+    tipos = ", ".join(sorted(parte.get("tipo_albaran_bidafarma", pd.Series("", index=parte.index)).dropna().astype(str).unique()))
+    bruto = pd.to_numeric(parte.get("bruto", 0), errors="coerce").fillna(0).sum()
+    st.success(
+        "Pedidos especiales Bidafarma detectados · "
+        f"Tipos: {tipos or '-'} · Líneas: {int(mask.sum())} · Importe: {bruto:.2f} €"
+    )
 
 
 def _archivo_a_bytes(uploaded_file):
@@ -1105,6 +1128,58 @@ def _mostrar_analisis_distribuidora(analisis):
         if top_cn is not None and not top_cn.empty:
             st.caption("Top CN parafarmacia financiada")
             _mostrar_tabla_dashboard(top_cn)
+
+    pedidos_especiales = analisis.get("pedidos_especiales_bidafarma", {}) or {}
+    if pedidos_especiales.get("ok"):
+        resumen_especiales = pedidos_especiales.get("resumen", {}) or {}
+        sx = pedidos_especiales.get("sx", {}) or {}
+        sq = pedidos_especiales.get("sq", {}) or {}
+        rentabilidad = (pedidos_especiales.get("rentabilidad", {}) or {}).get("resumen", {}) or {}
+        st.subheader("Pedidos especiales Bidafarma")
+        _tarjetas_metricas([
+            {"label": "Tipos detectados", "value": ", ".join(pedidos_especiales.get("tipos_detectados", [])) or "-"},
+            {"label": "Líneas", "value": resumen_especiales.get("lineas", 0)},
+            {"label": "Unidades", "value": f"{resumen_especiales.get('unidades', 0):.2f}"},
+            {"label": "Bruto total", "value": f"{resumen_especiales.get('bruto_total', 0):.2f} €"},
+            {"label": "Neto total", "value": f"{resumen_especiales.get('neto_total', 0):.2f} €"},
+            {"label": "Pérdida oportunidad", "value": f"{rentabilidad.get('perdida_oportunidad_total', 0):.2f} €"},
+        ])
+        if sx.get("compra_total_sx", 0) > 0:
+            st.caption("SX · Día del Farmacéutico")
+            _mostrar_tabla_dashboard(pd.DataFrame([sx]))
+        if sq.get("compra_total_sq", 0) > 0:
+            st.caption("SQ · Especialidad cara con descuento")
+            _mostrar_tabla_dashboard(pd.DataFrame([sq]))
+
+        st.caption("Rentabilidad de pedidos especiales")
+        _mostrar_tabla_dashboard(pd.DataFrame([rentabilidad]))
+        top_perdida = (pedidos_especiales.get("rentabilidad", {}) or {}).get("top_perdida", pd.DataFrame())
+        if top_perdida is not None and not top_perdida.empty:
+            st.caption("Top líneas con mayor pérdida de oportunidad")
+            _mostrar_tabla_dashboard(top_perdida)
+        labs_afectados = (pedidos_especiales.get("rentabilidad", {}) or {}).get("laboratorios_afectados", pd.DataFrame())
+        if labs_afectados is not None and not labs_afectados.empty:
+            st.caption("Laboratorios más afectados")
+            _mostrar_tabla_dashboard(labs_afectados)
+        detalle_especiales = pedidos_especiales.get("detalle", pd.DataFrame())
+        if detalle_especiales is not None and not detalle_especiales.empty:
+            with st.expander("Ver detalle pedidos especiales Bidafarma", expanded=False):
+                columnas_detalle = [
+                    "cn",
+                    "descripcion",
+                    "laboratorio_maestro",
+                    "tipo_albaran_bidafarma",
+                    "categoria_pedido_especial_bidafarma",
+                    "bruto",
+                    "neto",
+                    "condicion_real_pedido_especial",
+                    "mejor_condicion_alternativa",
+                    "via_alternativa_recomendada",
+                    "perdida_oportunidad_pedido_especial",
+                    "motivo_recomendacion_pedido_especial",
+                ]
+                columnas_detalle = [col for col in columnas_detalle if col in detalle_especiales.columns]
+                _mostrar_tabla_dashboard(detalle_especiales[columnas_detalle])
 
     operativa = analisis.get("operativa_proveedor", {})
     if operativa:
@@ -2213,6 +2288,7 @@ def _render_subida_albaranes_base(nombre_proveedor, proveedor_id):
     _guardar_dataset(f"df_{proveedor_id}", df)
     _mostrar_vistas_albaranes(df)
     _mostrar_tarjeta_parafarmacia_financiada(df)
+    _mostrar_tarjeta_pedidos_especiales_bidafarma(df)
 
     return df
 
@@ -2680,6 +2756,7 @@ def render_vida_pharma():
     if df is not None:
         _mostrar_vistas_albaranes(df)
         _mostrar_tarjeta_parafarmacia_financiada(df)
+        _mostrar_tarjeta_pedidos_especiales_bidafarma(df)
 
     if not df_faceta_bidafarma.empty:
         analisis_faceta = faceta.analizar_faceta_v(df, df_faceta_bidafarma) if df is not None else None

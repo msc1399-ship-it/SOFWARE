@@ -1,6 +1,6 @@
 import pandas as pd
 
-from modules import club_analysis, faceta, parafarmacia
+from modules import bidafarma_special_orders, club_analysis, faceta, parafarmacia
 
 
 TIPOS_ANALISIS = [
@@ -9,6 +9,7 @@ TIPOS_ANALISIS = [
     "especialidad_cara",
     "parafarmacia_financiada",
     "parafarmacia",
+    "pedidos_especiales_bidafarma",
     "transfer",
     "bitransfer",
     "avantia",
@@ -110,6 +111,12 @@ def _clasificar_bloques(df):
         "es_parafarmacia_financiada",
         pd.Series(False, index=df.index),
     ).fillna(False).astype(bool)
+    pedido_especial_bidafarma = df.get(
+        "es_pedido_especial_bidafarma",
+        pd.Series(False, index=df.index),
+    ).fillna(False).astype(bool)
+    tipo_bidafarma = df.get("tipo_albaran_bidafarma", pd.Series("", index=df.index)).astype(str).str.upper()
+    sq_especialidad_cara = pedido_especial_bidafarma & tipo_bidafarma.eq("SQ") & especialidad_cara
 
     bloque = pd.Series("otros", index=df.index, dtype="object")
     bloque[tipo_compra.eq("transfer")] = "transfer"
@@ -119,7 +126,8 @@ def _clasificar_bloques(df):
     bloque[descripcion.str.contains("nexo", na=False)] = "nexo"
     bloque[tipo_compra.eq("goteo") & seccion.eq("especialidad") & ~mask_club] = "especialidad"
     bloque[tipo_compra.eq("goteo") & seccion.eq("parafarmacia") & ~mask_club] = "parafarmacia"
-    bloque[especialidad_cara] = "especialidad_cara"
+    bloque[pedido_especial_bidafarma] = "pedidos_especiales_bidafarma"
+    bloque[especialidad_cara & (~pedido_especial_bidafarma | sq_especialidad_cara)] = "especialidad_cara"
     bloque[parafarmacia_financiada] = "parafarmacia_financiada"
 
     goteo = (
@@ -127,6 +135,7 @@ def _clasificar_bloques(df):
         & seccion.isin(["especialidad", "parafarmacia"])
         & ~especialidad_cara
         & ~parafarmacia_financiada
+        & ~pedido_especial_bidafarma
         & ~seccion.isin(["club", "avantia", "bitransfer"])
         & ~mask_club
         & ~descripcion.str.contains("club|avantia|bitransfer|bittransfer|nexo|plataforma", na=False)
@@ -135,6 +144,8 @@ def _clasificar_bloques(df):
     bloque[goteo & seccion.eq("especialidad")] = "especialidad"
     bloque[goteo & seccion.eq("parafarmacia")] = "parafarmacia"
     bloque[mask_club] = "clubes"
+    bloque[pedido_especial_bidafarma] = "pedidos_especiales_bidafarma"
+    bloque[especialidad_cara & (~pedido_especial_bidafarma | sq_especialidad_cara)] = "especialidad_cara"
     bloque[parafarmacia_financiada] = "parafarmacia_financiada"
     return bloque
 
@@ -415,14 +426,23 @@ def calcular_especialidad_cara(df):
     if trabajo.empty or "es_especialidad_cara" not in trabajo.columns:
         caras = pd.DataFrame()
     else:
-        caras = trabajo[trabajo["es_especialidad_cara"].fillna(False).astype(bool)].copy()
+        especiales = trabajo.get(
+            "es_pedido_especial_bidafarma",
+            pd.Series(False, index=trabajo.index),
+        ).fillna(False).astype(bool)
+        tipo_bidafarma = trabajo.get("tipo_albaran_bidafarma", pd.Series("", index=trabajo.index)).astype(str).str.upper()
+        incluir_cara = (
+            trabajo["es_especialidad_cara"].fillna(False).astype(bool)
+            & (~especiales | tipo_bidafarma.eq("SQ"))
+        )
+        caras = trabajo[incluir_cara].copy()
 
     bruto = float(_serie_numerica(caras, "bruto").sum()) if not caras.empty else 0.0
     neto = float(_serie_numerica(caras, "neto").sum()) if not caras.empty else 0.0
     unidades = float(_serie_numerica(caras, "unidades").sum()) if not caras.empty else 0.0
     descuento_euros = float(_serie_numerica(caras, "descuento_especialidad_cara_euros").sum()) if not caras.empty else 0.0
     base_iva4_total = float(_serie_numerica(trabajo, "base_iva4_total").sum()) if not trabajo.empty else 0.0
-    base_iva4_cara = float(_serie_numerica(trabajo, "base_iva4_especialidad_cara").sum()) if not trabajo.empty else 0.0
+    base_iva4_cara = float(_serie_numerica(caras, "neto").sum()) if not caras.empty else 0.0
 
     return {
         "lineas_detectadas": int(len(caras)),
@@ -693,6 +713,7 @@ def generar_analisis_distribuidora(
                 }
     especialidad_cara = calcular_especialidad_cara(df)
     parafarmacia_financiada = calcular_parafarmacia_financiada(df)
+    pedidos_especiales_bidafarma = bidafarma_special_orders.generar_resumen_pedidos_especiales_bidafarma(df)
     operativa = calcular_operativa_proveedor(df)
     top_impacto, mensaje_top = calcular_top_articulos_impactados(df)
     diagnostico = generar_diagnostico(volumen, descuentos, gastos_resumen, especialidad_cara, top_impacto, mensaje_top)
@@ -700,6 +721,16 @@ def generar_analisis_distribuidora(
         diagnostico.setdefault("oportunidades", []).append(
             "Separar parafarmacia financiada de las condiciones comerciales generales y revisar volumen por laboratorio."
         )
+    if pedidos_especiales_bidafarma.get("ok"):
+        perdida = (
+            pedidos_especiales_bidafarma.get("rentabilidad", {})
+            .get("resumen", {})
+            .get("perdida_oportunidad_total", 0)
+        )
+        if perdida:
+            diagnostico.setdefault("oportunidades", []).append(
+                f"Revisar pedidos especiales Bidafarma: pérdida de oportunidad estimada {perdida:.2f} €."
+            )
     condiciones_comerciales = calcular_condiciones_comerciales(
         condicion_detectada=condicion_detectada,
         analisis_faceta=analisis_faceta,
@@ -741,6 +772,7 @@ def generar_analisis_distribuidora(
         "gastos_resumen": gastos_resumen,
         "especialidad_cara_resumen": especialidad_cara,
         "parafarmacia_financiada": parafarmacia_financiada,
+        "pedidos_especiales_bidafarma": pedidos_especiales_bidafarma,
         "operativa_proveedor": operativa,
         "top_impacto": top_impacto,
         "top_impacto_mensaje": mensaje_top,
