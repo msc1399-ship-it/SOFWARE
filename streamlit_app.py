@@ -3790,6 +3790,9 @@ def render_bandeja_documental():
                             "Periodo": item.get("periodo_detectado", ""),
                             "Fechas": " | ".join(item.get("fechas_detectadas", [])),
                             "Liquidaciones": " | ".join(item.get("posibles_liquidaciones_detectadas", [])),
+                            "Tipo 74": bool(item.get("contiene_tipo_74")),
+                            "ZV/Zacofarva": bool(item.get("contiene_zv_zacofarva")),
+                            "Liq. embebida": bool(item.get("posible_liquidacion_embebida")),
                             "Formato": item["formato_detectado"],
                             "Columnas": len(item["columnas_detectadas"]),
                             "Filas": item["numero_filas"],
@@ -3813,6 +3816,8 @@ def render_bandeja_documental():
                             st.caption("ZIP: " + ", ".join(item["zip_archivos_internos"][:80]))
                         if item.get("texto_extraido_resumido"):
                             st.caption("Texto PDF: " + item["texto_extraido_resumido"])
+                        if item.get("clasificacion_paginas"):
+                            st.dataframe(pd.DataFrame(item["clasificacion_paginas"]), hide_index=True, use_container_width=True)
         else:
             st.info("Aun no hay preanalisis guardado para este expediente.")
 

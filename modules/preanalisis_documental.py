@@ -65,6 +65,11 @@ class ResultadoPreanalisisDocumento:
     tipos_albaran_detectados: List[str] = field(default_factory=list)
     posibles_liquidaciones_detectadas: List[str] = field(default_factory=list)
     texto_extraido_resumido: str = ""
+    clasificacion_paginas: List[Dict[str, object]] = field(default_factory=list)
+    contiene_tipo_74: bool = False
+    contiene_zv_zacofarva: bool = False
+    posible_liquidacion_embebida: bool = False
+    subtipo_bidafarma: str = ""
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -319,6 +324,16 @@ def _analizar_zip(path: Path, resultado: ResultadoPreanalisisDocumento) -> None:
 
 def _detectar_tipo_y_proveedor(resultado: ResultadoPreanalisisDocumento) -> None:
     texto = _texto_evidencia(resultado)
+    if (
+        resultado.perfil_documental == bd.PerfilDocumental.BIDAFARMA.value
+        and resultado.contiene_factura
+        and resultado.contiene_albaranes
+    ):
+        resultado.tipo_documental_detectado = bd.TipoDocumento.FACTURAS.value
+        resultado.confianza_tipo = max(resultado.confianza_tipo, 0.9)
+        resultado.proveedor_detectado = "Bidafarma"
+        resultado.confianza_proveedor = max(resultado.confianza_proveedor, 0.95)
+        return
     scores_tipo = _score_keywords(texto, TIPO_KEYWORDS)
     if scores_tipo:
         tipo, score = max(scores_tipo.items(), key=lambda item: item[1])
@@ -483,18 +498,21 @@ def preanalizar_pdf_bidafarma(resultado: ResultadoPreanalisisDocumento, texto: s
         return
 
     paginas = getattr(resultado, "_paginas_texto_detectadas", None) or _paginas_texto_pdf(texto, max(1, resultado.pdf_paginas))
+    clasificacion = [_clasificar_pagina_bidafarma(idx, pagina) for idx, pagina in enumerate(paginas, start=1)]
+    resultado.clasificacion_paginas = clasificacion
     resultado.pdf_compuesto = True
-    resultado.contiene_factura = "factura" in evidencia
-    resultado.contiene_albaranes = any(
-        token in evidencia for token in ("albaran", "albaranes", "albarán", "pedido", "tipo 74", "zv")
+    resultado.contiene_factura = any(item["clasificacion"] == "FACTURA" for item in clasificacion)
+    resultado.contiene_albaranes = any(item["clasificacion"] == "ALBARAN" for item in clasificacion)
+    resultado.contiene_tipo_74 = "tipo 74" in evidencia or "tp 74" in evidencia
+    resultado.contiene_zv_zacofarva = any(token in evidencia for token in ("zacofarva", "zv"))
+    resultado.posible_liquidacion_embebida = any(
+        bool(item.get("posible_liquidacion")) for item in clasificacion
     )
     resultado.paginas_factura = [
-        idx for idx, pagina in enumerate(paginas, start=1)
-        if "factura" in bd.normalizar_texto(pagina)
+        int(item["pagina"]) for item in clasificacion if item["clasificacion"] == "FACTURA"
     ]
     resultado.paginas_albaranes = [
-        idx for idx, pagina in enumerate(paginas, start=1)
-        if any(token in bd.normalizar_texto(pagina) for token in ("albaran", "albaranes", "albarán", "pedido", "tipo 74", "zv"))
+        int(item["pagina"]) for item in clasificacion if item["clasificacion"] == "ALBARAN"
     ]
     if resultado.paginas_albaranes:
         primera_albaran = min(resultado.paginas_albaranes)
@@ -538,6 +556,7 @@ def preanalizar_pdf_bidafarma(resultado: ResultadoPreanalisisDocumento, texto: s
         resultado.subtipo_documental = SUBTIPO_BIDAFARMA_NORMAL_GOTEO
     else:
         resultado.subtipo_documental = SUBTIPO_BIDAFARMA_OTROS
+    resultado.subtipo_bidafarma = resultado.subtipo_documental
 
     if resultado.contiene_factura and resultado.contiene_albaranes:
         resultado.tipo_documental_detectado = bd.TipoDocumento.FACTURAS.value
@@ -548,6 +567,52 @@ def preanalizar_pdf_bidafarma(resultado: ResultadoPreanalisisDocumento, texto: s
         resultado.warnings.append(
             "Warning suave: PDF Bidafarma legible con factura, pero sin patrones claros de albaranes embebidos. Revisar manualmente."
         )
+
+
+def _clasificar_pagina_bidafarma(pagina: int, texto: str) -> Dict[str, object]:
+    texto_norm = bd.normalizar_texto(texto)
+    factura_fuertes = ("base imponible", "iva", "total factura")
+    factura_kw = ("factura", "n factura", "nº factura", "base imponible", "iva", "total factura", "vencimiento", "forma de pago")
+    albaran_kw = ("albaran", "albaranes", "albarán", "n albaran", "nº albaran", "pedido", "codigo nacional", "código nacional", "unidades", "pva", "descuento", "zacofarva", "zv", "goteo", "transfer", "bitransfer")
+    liquidacion_kw = ("abono", "liquidacion", "liquidación", "regularizacion", "regularización", "cargo", "tipo 74")
+
+    score_factura = sum(1 for token in factura_kw if token in texto_norm)
+    score_albaran = sum(1 for token in albaran_kw if token in texto_norm)
+    score_liquidacion = sum(1 for token in liquidacion_kw if token in texto_norm)
+    tiene_factura_fuerte = any(token in texto_norm for token in factura_fuertes)
+    posible_liquidacion = score_liquidacion > 0
+
+    tiene_marca_albaran = any(token in texto_norm for token in ("albaran", "albarán", "pedido", "codigo nacional", "código nacional"))
+    if score_factura and tiene_factura_fuerte:
+        clasificacion = "FACTURA"
+    elif score_factura and "factura" in texto_norm and not tiene_marca_albaran:
+        clasificacion = "FACTURA"
+    elif score_albaran:
+        clasificacion = "ALBARAN"
+    elif score_liquidacion:
+        clasificacion = "LIQUIDACION_ABONO"
+    elif score_factura:
+        clasificacion = "FACTURA"
+    elif any(token in texto_norm for token in ("resumen", "total", "periodo")):
+        clasificacion = "RESUMEN"
+    else:
+        clasificacion = "DESCONOCIDA"
+
+    if clasificacion == "ALBARAN" and posible_liquidacion:
+        liquidacion_pura = False
+    else:
+        liquidacion_pura = clasificacion == "LIQUIDACION_ABONO"
+
+    return {
+        "pagina": pagina,
+        "clasificacion": clasificacion,
+        "score_factura": score_factura,
+        "score_albaran": score_albaran,
+        "score_liquidacion": score_liquidacion,
+        "posible_liquidacion": posible_liquidacion,
+        "liquidacion_pura": liquidacion_pura,
+        "texto_resumido": _resumir_texto(texto, limite=260),
+    }
 
 
 

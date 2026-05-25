@@ -162,7 +162,12 @@ class BandejaDocumentalRepository:
                     numero_albaranes_detectados INTEGER NOT NULL DEFAULT 0,
                     tipos_albaran_detectados_json TEXT NOT NULL DEFAULT '[]',
                     posibles_liquidaciones_detectadas_json TEXT NOT NULL DEFAULT '[]',
-                    texto_extraido_resumido TEXT NOT NULL DEFAULT ''
+                    texto_extraido_resumido TEXT NOT NULL DEFAULT '',
+                    clasificacion_paginas_json TEXT NOT NULL DEFAULT '[]',
+                    contiene_tipo_74 INTEGER NOT NULL DEFAULT 0,
+                    contiene_zv_zacofarva INTEGER NOT NULL DEFAULT 0,
+                    posible_liquidacion_embebida INTEGER NOT NULL DEFAULT 0,
+                    subtipo_bidafarma TEXT NOT NULL DEFAULT ''
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_expedientes_estado ON expedientes(estado);
@@ -198,6 +203,11 @@ class BandejaDocumentalRepository:
             self._ensure_column(conn, "preanalisis_documento", "tipos_albaran_detectados_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "preanalisis_documento", "posibles_liquidaciones_detectadas_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "preanalisis_documento", "texto_extraido_resumido", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "preanalisis_documento", "clasificacion_paginas_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "preanalisis_documento", "contiene_tipo_74", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "preanalisis_documento", "contiene_zv_zacofarva", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "preanalisis_documento", "posible_liquidacion_embebida", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "preanalisis_documento", "subtipo_bidafarma", "TEXT NOT NULL DEFAULT ''")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -540,8 +550,10 @@ class BandejaDocumentalRepository:
                     paginas_factura_json, paginas_albaranes_json, numero_factura,
                     fechas_detectadas_json, periodo_detectado, albaranes_detectados_count,
                     numero_albaranes_detectados, tipos_albaran_detectados_json,
-                    posibles_liquidaciones_detectadas_json, texto_extraido_resumido
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    posibles_liquidaciones_detectadas_json, texto_extraido_resumido,
+                    clasificacion_paginas_json, contiene_tipo_74, contiene_zv_zacofarva,
+                    posible_liquidacion_embebida, subtipo_bidafarma
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["expediente_id"],
@@ -586,6 +598,11 @@ class BandejaDocumentalRepository:
                     json.dumps(data.get("tipos_albaran_detectados", []), ensure_ascii=False),
                     json.dumps(data.get("posibles_liquidaciones_detectadas", []), ensure_ascii=False),
                     data.get("texto_extraido_resumido", ""),
+                    json.dumps(data.get("clasificacion_paginas", []), ensure_ascii=False),
+                    1 if data.get("contiene_tipo_74") else 0,
+                    1 if data.get("contiene_zv_zacofarva") else 0,
+                    1 if data.get("posible_liquidacion_embebida") else 0,
+                    data.get("subtipo_bidafarma", ""),
                 ),
             )
 
@@ -700,11 +717,15 @@ class BandejaDocumentalRepository:
         data["fechas_detectadas"] = json.loads(data.pop("fechas_detectadas_json", "[]") or "[]")
         data["tipos_albaran_detectados"] = json.loads(data.pop("tipos_albaran_detectados_json", "[]") or "[]")
         data["posibles_liquidaciones_detectadas"] = json.loads(data.pop("posibles_liquidaciones_detectadas_json", "[]") or "[]")
+        data["clasificacion_paginas"] = json.loads(data.pop("clasificacion_paginas_json", "[]") or "[]")
         data["pdf_texto_extraible"] = bool(data["pdf_texto_extraible"])
         data["valido_para_analisis"] = bool(data["valido_para_analisis"])
         data["pdf_compuesto"] = bool(data.get("pdf_compuesto"))
         data["contiene_factura"] = bool(data.get("contiene_factura"))
         data["contiene_albaranes"] = bool(data.get("contiene_albaranes"))
+        data["contiene_tipo_74"] = bool(data.get("contiene_tipo_74"))
+        data["contiene_zv_zacofarva"] = bool(data.get("contiene_zv_zacofarva"))
+        data["posible_liquidacion_embebida"] = bool(data.get("posible_liquidacion_embebida"))
         return data
 
     def stats(self) -> Dict[str, int]:

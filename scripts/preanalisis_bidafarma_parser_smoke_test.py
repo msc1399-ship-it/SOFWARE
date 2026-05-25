@@ -45,8 +45,12 @@ def main() -> None:
     assert normal.contiene_albaranes
     assert normal.paginas_factura == [1]
     assert normal.paginas_albaranes == [2]
+    assert normal.clasificacion_paginas[0]["clasificacion"] == "FACTURA"
+    assert normal.clasificacion_paginas[1]["clasificacion"] == "ALBARAN"
     assert normal.numero_factura
     assert normal.numero_albaranes_detectados >= 1
+    assert normal.contiene_zv_zacofarva
+    assert normal.tipo_documental_detectado != "Liquidaciones"
     assert normal.subtipo_documental == pre.SUBTIPO_BIDAFARMA_NORMAL_GOTEO
 
     transfer = _analizar_pdf(
@@ -67,7 +71,11 @@ def main() -> None:
     )
     assert mixto_tipo74.subtipo_documental == pre.SUBTIPO_BIDAFARMA_MIXTO
     assert "74" in mixto_tipo74.tipos_albaran_detectados
+    assert mixto_tipo74.contiene_tipo_74
+    assert mixto_tipo74.contiene_zv_zacofarva is False
+    assert mixto_tipo74.posible_liquidacion_embebida
     assert mixto_tipo74.posibles_liquidaciones_detectadas
+    assert mixto_tipo74.tipo_documental_detectado != "Liquidaciones"
 
     sin_albaranes = _analizar_pdf(
         "bidafarma_factura_sola.pdf",
