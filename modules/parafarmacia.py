@@ -162,6 +162,7 @@ def detectar_parafarmacia_financiada(df_compras, df_nomenclator=None):
     df["cn"] = cn.where(cn.notna(), df.get("cn", pd.Series("", index=df.index)))
 
     mask_nomenclator = pd.Series(False, index=df.index)
+    mask_maestro_laboratorio = pd.Series(False, index=df.index)
     sin_nomenclator = df_nomenclator is None or df_nomenclator.empty
 
     if not sin_nomenclator:
@@ -177,6 +178,16 @@ def detectar_parafarmacia_financiada(df_compras, df_nomenclator=None):
         if columnas_a_limpiar:
             df = df.drop(columns=columnas_a_limpiar)
         df = df.merge(extras, on="cn", how="left")
+        mask_maestro_laboratorio = df.get(
+            "laboratorio_nomenclator",
+            pd.Series("", index=df.index),
+        ).fillna("").astype(str).str.strip().ne("")
+
+    if "laboratorio_maestro" in df.columns:
+        mask_maestro_laboratorio = (
+            mask_maestro_laboratorio
+            | df["laboratorio_maestro"].fillna("").astype(str).str.strip().ne("")
+        )
 
     if pvp_cols:
         pvp_numerico = pd.concat([_serie_numerica(df, col) for col in pvp_cols], axis=1).max(axis=1)
@@ -187,15 +198,25 @@ def detectar_parafarmacia_financiada(df_compras, df_nomenclator=None):
     for col in pvp_cols:
         texto_pvp = (texto_pvp + " " + df[col].astype(str).map(_normalizar_texto)).str.strip()
     mask_neto = texto_pvp.str.contains(r"\bneto\b", na=False)
+    mask_diet = texto_pvp.str.contains(r"\bdiet\w*\b", na=False)
+    hay_columna_pvp = bool(pvp_cols)
 
     mask_base = mask_iva10 & mask_parafarmacia & ~especialidad_cara
-    mask_financiada_nomenclator = mask_base & mask_nomenclator
-    mask_financiada_pvp = mask_base & ~mask_nomenclator & mask_pvp_real & ~mask_neto
-    mask_financiada = mask_financiada_nomenclator | mask_financiada_pvp
+    mask_financiada_pvp = mask_base & mask_pvp_real & ~mask_neto
+    mask_financiada_pvp = mask_financiada_pvp & ~mask_diet
+    mask_sin_columna_pvp = pd.Series([not hay_columna_pvp] * len(df), index=df.index)
+    mask_financiada_nomenclator = mask_base & mask_sin_columna_pvp & mask_nomenclator
+    mask_financiada_maestro = mask_base & mask_sin_columna_pvp & ~mask_financiada_nomenclator & mask_maestro_laboratorio
+    mask_financiada = (
+        mask_financiada_pvp
+        | mask_financiada_nomenclator
+        | mask_financiada_maestro
+    )
 
     fuente = pd.Series("no_detectada", index=df.index, dtype="object")
-    fuente[mask_financiada_nomenclator] = "nomenclator"
     fuente[mask_financiada_pvp] = "pvp_iva"
+    fuente[mask_financiada_nomenclator] = "nomenclator"
+    fuente[mask_financiada_maestro] = "laboratorio_maestro"
 
     df["es_parafarmacia_financiada"] = mask_financiada.fillna(False).astype(bool)
     df["tipo_parafarmacia"] = "no_aplica"
