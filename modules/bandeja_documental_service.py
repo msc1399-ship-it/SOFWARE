@@ -422,44 +422,87 @@ class BandejaDocumentalService:
 
     def _bloque_compras_desde_preanalisis(self, docs: List[Dict[str, object]]) -> Dict[str, object]:
         for doc in docs:
-            if doc.get("errores_detectados"):
-                continue
-            proveedor = bd.normalizar_texto(str(doc.get("proveedor_detectado", "")))
-            tipo = str(doc.get("tipo_documental_detectado", ""))
-            pdf_compuesto = bool(doc.get("pdf_compuesto"))
-            contiene_factura = bool(doc.get("contiene_factura"))
-            if proveedor in {"bidafarma", "vida pharma"} and contiene_factura:
-                return self._detalle_bloque(
-                    True,
-                    f"Bloque satisfecho mediante PDF Bidafarma compuesto detectado: {doc.get('nombre_archivo', '')}.",
-                    "preanalisis",
-                    max(float(doc.get("confianza_proveedor", 0) or 0), 0.9),
-                )
-            if tipo in {bd.TipoDocumento.COMPRAS.value, bd.TipoDocumento.FACTURAS.value, bd.TipoDocumento.ALBARANES.value}:
-                return self._detalle_bloque(
-                    True,
-                    f"Bloque satisfecho por tipo documental detectado ({tipo}): {doc.get('nombre_archivo', '')}.",
-                    "preanalisis",
-                    float(doc.get("confianza_tipo", 0) or 0.5),
-                )
-            if pdf_compuesto and contiene_factura:
-                return self._detalle_bloque(
-                    True,
-                    f"Bloque satisfecho mediante PDF compuesto valido: {doc.get('nombre_archivo', '')}.",
-                    "preanalisis",
-                    max(float(doc.get("confianza_tipo", 0) or 0), 0.7),
-                )
-            if str(doc.get("extension", "")).lower() == ".zip" and any(
-                token in bd.normalizar_texto(" ".join(doc.get("zip_archivos_internos", [])))
-                for token in ("compra", "compras", "factura", "bidafarma", "albaran")
-            ):
-                return self._detalle_bloque(
-                    True,
-                    f"Bloque satisfecho por ZIP con documentación de compras: {doc.get('nombre_archivo', '')}.",
-                    "preanalisis",
-                    0.6,
-                )
+            computa, motivo, confianza = self._doc_preanalisis_satisface_compras(doc)
+            if computa:
+                return self._detalle_bloque(True, motivo, "preanalisis", confianza)
         return self._detalle_bloque(False, "", "", 0)
+
+    def debug_compras_proveedor_preanalisis(self, expediente_id: str) -> List[Dict[str, object]]:
+        expediente = self.repo.get_expediente(expediente_id)
+        if not expediente:
+            return []
+        activos = [
+            doc for doc in self.repo.list_documentos(expediente_id, include_deleted=False)
+            if doc.get("estado_documento") == bd.EstadoDocumento.RECIBIDO.value
+        ]
+        rows = []
+        for doc in self._preanalisis_activo(expediente_id, activos):
+            computa, motivo, confianza = self._doc_preanalisis_satisface_compras(doc)
+            rows.append(
+                {
+                    "nombre": doc.get("nombre_archivo", ""),
+                    "proveedor_detectado": doc.get("proveedor_detectado", ""),
+                    "subtipo_bidafarma": doc.get("subtipo_bidafarma") or doc.get("subtipo_documental", ""),
+                    "pdf_compuesto": bool(doc.get("pdf_compuesto")),
+                    "contiene_factura": bool(doc.get("contiene_factura")),
+                    "contiene_albaranes": bool(doc.get("contiene_albaranes")),
+                    "tipo_documental_detectado": doc.get("tipo_documental_detectado", ""),
+                    "computa_compras_proveedor": computa,
+                    "motivo": motivo,
+                    "confianza": round(confianza, 2),
+                }
+            )
+        return rows
+
+    def _doc_preanalisis_satisface_compras(self, doc: Dict[str, object]) -> Tuple[bool, str, float]:
+        if doc.get("errores_detectados"):
+            return False, "No computa: el preanalisis del documento tiene errores.", 0.0
+        proveedor_raw = str(doc.get("proveedor_detectado", ""))
+        proveedor = bd.normalizar_texto(proveedor_raw)
+        subtipo = str(doc.get("subtipo_bidafarma") or doc.get("subtipo_documental") or "")
+        tipo = str(doc.get("tipo_documental_detectado", ""))
+        tipo_normalizado = bd.normalizar_texto(tipo)
+        pdf_compuesto = bool(doc.get("pdf_compuesto"))
+        contiene_factura = bool(doc.get("contiene_factura"))
+        nombre = str(doc.get("nombre_archivo", ""))
+        confianza_proveedor = float(doc.get("confianza_proveedor", 0) or 0)
+        confianza_tipo = float(doc.get("confianza_tipo", 0) or 0)
+        subtipos_bidafarma = {
+            "BIDAFARMA_NORMAL_GOTEO",
+            "BIDAFARMA_TRANSFER",
+            "BIDAFARMA_MIXTO",
+        }
+        tipos_compras = {
+            bd.TipoDocumento.COMPRAS.value,
+            bd.TipoDocumento.FACTURAS.value,
+            "COMPRAS_PROVEEDOR",
+            "FACTURA_CON_ALBARANES_EMBEBIDOS",
+        }
+
+        if proveedor in {"bidafarma", "vida pharma"}:
+            if contiene_factura:
+                return True, f"Completo por PDF Bidafarma con factura detectada: {nombre}", max(confianza_proveedor, 0.67)
+            if pdf_compuesto:
+                return True, f"Completo por PDF compuesto Bidafarma detectado: {nombre}", max(confianza_proveedor, 0.65)
+            if subtipo in subtipos_bidafarma:
+                return True, f"Completo por subtipo Bidafarma detectado ({subtipo}): {nombre}", max(confianza_proveedor, 0.65)
+
+        if subtipo in subtipos_bidafarma:
+            return True, f"Completo por subtipo Bidafarma detectado ({subtipo}): {nombre}", max(confianza_proveedor, 0.65)
+
+        if pdf_compuesto and contiene_factura and ("bidafarma" in proveedor or "vida" in proveedor):
+            return True, f"Completo por PDF compuesto Bidafarma con factura: {nombre}", max(confianza_proveedor, 0.65)
+
+        if tipo in tipos_compras or tipo_normalizado in {"compras proveedor", "factura con albaranes embebidos", "facturas", "compras"}:
+            return True, f"Completo por tipo documental detectado ({tipo}): {nombre}", max(confianza_tipo, 0.55)
+
+        if str(doc.get("extension", "")).lower() == ".zip" and any(
+            token in bd.normalizar_texto(" ".join(doc.get("zip_archivos_internos", [])))
+            for token in ("compra", "compras", "factura", "bidafarma", "albaran")
+        ):
+            return True, f"Completo por ZIP con documentacion de compras: {nombre}", 0.6
+
+        return False, "No computa: no hay proveedor/subtipo/tipo de compras suficiente en preanalisis.", 0.0
 
     def _bloque_tabular_desde_preanalisis(self, docs: List[Dict[str, object]], tipo_esperado: str) -> Dict[str, object]:
         for doc in docs:

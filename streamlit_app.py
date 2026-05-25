@@ -3656,11 +3656,16 @@ def render_bandeja_documental():
             if completo and detalle_bloque.get("razon"):
                 confianza = float(detalle_bloque.get("confianza", 0) or 0)
                 bcols[idx].caption(
-                    f"{detalle_bloque.get('fuente', 'validacion')} · confianza {confianza:.0%}"
+                    f"{detalle_bloque.get('fuente', 'validacion')} - confianza {confianza:.0%}"
                 )
+                bcols[idx].caption(str(detalle_bloque.get("razon", "")))
         st.caption(
             "Opcionales/detectables dentro de compras: albaranes embebidos, liquidaciones/abonos, facturas laboratorio y otros."
         )
+        debug_compras = service.debug_compras_proveedor_preanalisis(expediente_id)
+        if debug_compras:
+            with st.expander("Debug COMPRAS_PROVEEDOR desde preanalisis", expanded=False):
+                st.dataframe(pd.DataFrame(debug_compras), hide_index=True, use_container_width=True)
 
         faltantes = evaluacion_bloques.get("bloques_faltantes", [])
         if faltantes:

@@ -109,17 +109,34 @@ def main() -> None:
 
     # E) ZIP completo: se expande y satisface bloques.
     exp_zip = service.crear_expediente_desde_asunto("ASESORIA_1T_2026_FARMACIA_SAN_MIGUEL", "Cliente", "c@example.com")
-    repo.update_expediente_fields(exp_zip, perfil_documental=bd.PerfilDocumental.BIDAFARMA.value)
     service.registrar_subida_manual(exp_zip, [("documentacion_completa.zip", _zip_completo())])
     preanalisis_documental.ejecutar_preanalisis_expediente(exp_zip, repo=repo)
+    repo.update_expediente_fields(exp_zip, perfil_documental=bd.PerfilDocumental.GENERICO.value)
     bloques_zip = service.evaluar_bloques_documentales(exp_zip)
     assert bloques_zip["bloques"][bd.BloqueDocumental.COMPRAS_PROVEEDOR.value], bloques_zip
     assert bloques_zip["bloques"][bd.BloqueDocumental.VENTAS.value], bloques_zip
     assert bloques_zip["bloques"][bd.BloqueDocumental.STOCK.value], bloques_zip
     assert bloques_zip["bloques_detalle"][bd.BloqueDocumental.COMPRAS_PROVEEDOR.value]["fuente"] == "preanalisis"
+    assert "Bidafarma" in bloques_zip["bloques_detalle"][bd.BloqueDocumental.COMPRAS_PROVEEDOR.value]["razon"]
+    debug_zip = service.debug_compras_proveedor_preanalisis(exp_zip)
+    assert any(row["computa_compras_proveedor"] for row in debug_zip), debug_zip
     assert not bloques_zip["bloques_faltantes"], bloques_zip
     ok_zip, motivos_zip = service.marcar_listo_para_analisis(exp_zip)
     assert ok_zip, motivos_zip
+
+    # F) Condiciones directas de preanalisis: subtipo Bidafarma computa aunque el perfil sea generico.
+    computa_subtipo, _, _ = service._doc_preanalisis_satisface_compras(
+        {
+            "nombre_archivo": "archivo_ambiguo.pdf",
+            "proveedor_detectado": "Otros",
+            "subtipo_bidafarma": "BIDAFARMA_TRANSFER",
+            "pdf_compuesto": False,
+            "contiene_factura": False,
+            "tipo_documental_detectado": "Liquidaciones",
+            "errores_detectados": [],
+        }
+    )
+    assert computa_subtipo
 
     print("ok bloques documentales smoke")
     tmp.cleanup()
