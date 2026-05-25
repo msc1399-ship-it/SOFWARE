@@ -30,6 +30,7 @@ import modules.parafarmacia as parafarmacia
 import modules.transfer_manual_mapping as transfer_manual_mapping
 import modules.maestros_persistentes as maestros_persistentes
 import modules.bandeja_documental as bandeja_documental
+import modules.preanalisis_documental as preanalisis_documental
 from modules.bandeja_documental_inbox import AdjuntoEntrante, EmailEntrante, procesar_email_entrante
 from modules.bandeja_documental_repository import BandejaDocumentalRepository
 from modules.bandeja_documental_service import BandejaDocumentalService
@@ -51,6 +52,7 @@ parafarmacia = importlib.reload(parafarmacia)
 transfer_manual_mapping = importlib.reload(transfer_manual_mapping)
 maestros_persistentes = importlib.reload(maestros_persistentes)
 bandeja_documental = importlib.reload(bandeja_documental)
+preanalisis_documental = importlib.reload(preanalisis_documental)
 
 try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
@@ -3461,6 +3463,22 @@ def _bd_estado_badge(estado):
     )
 
 
+def _preanalisis_badge(estado, valido=True):
+    colores = {
+        preanalisis_documental.EstadoPreanalisis.PREANALISIS_COMPLETADO.value: "#16a34a",
+        preanalisis_documental.EstadoPreanalisis.PREANALISIS_WARNING.value: "#ca8a04",
+        preanalisis_documental.EstadoPreanalisis.PREANALISIS_ERROR.value: "#dc2626",
+        preanalisis_documental.EstadoPreanalisis.PREANALISIS_PENDIENTE.value: "#64748b",
+    }
+    color = colores.get(estado, "#64748b")
+    etiqueta = estado if estado else ("valido" if valido else "error")
+    return (
+        f"<span style='display:inline-block;background:{color};color:white;"
+        "padding:4px 10px;border-radius:8px;font-weight:700;font-size:0.78rem'>"
+        f"{html.escape(str(etiqueta))}</span>"
+    )
+
+
 def _bd_format_bytes(num):
     try:
         num = float(num or 0)
@@ -3693,6 +3711,66 @@ def render_bandeja_documental():
         else:
             st.info("Todavia no hay documentos registrados.")
 
+        st.subheader("Preanalisis documental automatico")
+        pre_exp = repo.get_preanalisis_expediente(expediente_id)
+        p1, p2, p3, p4 = st.columns([1, 1, 1, 2])
+        disabled_pre = exp["estado"] != bandeja_documental.EstadoExpediente.LISTO_ANALISIS.value
+        if p1.button("Ejecutar preanalisis", disabled=disabled_pre):
+            with st.spinner("Comprendiendo estructura documental..."):
+                try:
+                    resultado_pre = preanalisis_documental.ejecutar_preanalisis_expediente(expediente_id, repo=repo)
+                    st.session_state["bd_preanalisis_resultado"] = resultado_pre.to_dict()
+                    st.success(f"Preanalisis terminado: {resultado_pre.estado_preanalisis}")
+                    st.rerun()
+                except Exception as error:
+                    st.error(str(error))
+        if disabled_pre:
+            p4.info("Marca el expediente como Listo para analisis antes de ejecutar el preanalisis.")
+        if pre_exp:
+            p2.metric("Docs OK", pre_exp["documentos_ok"])
+            p3.metric("Warnings", pre_exp["documentos_warning"])
+            p4.markdown(_preanalisis_badge(pre_exp["estado_preanalisis"], pre_exp["valido_global"]), unsafe_allow_html=True)
+            st.caption(f"Ultima ejecucion: {pre_exp['fecha_ejecucion']}")
+            if pre_exp["warnings_globales"]:
+                st.warning("Warnings globales: " + " | ".join(pre_exp["warnings_globales"]))
+            if pre_exp["errores_globales"]:
+                st.error("Errores globales: " + " | ".join(pre_exp["errores_globales"]))
+
+            pre_docs = repo.list_preanalisis_documentos(expediente_id)
+            if pre_docs:
+                tabla_pre = pd.DataFrame(
+                    [
+                        {
+                            "Documento": item["nombre_archivo"],
+                            "Esperado": item["tipo_documental_esperado"],
+                            "Detectado": item["tipo_documental_detectado"],
+                            "Confianza tipo": round(float(item["confianza_tipo"]), 2),
+                            "Proveedor": item["proveedor_detectado"],
+                            "Confianza proveedor": round(float(item["confianza_proveedor"]), 2),
+                            "Formato": item["formato_detectado"],
+                            "Columnas": len(item["columnas_detectadas"]),
+                            "Filas": item["numero_filas"],
+                            "Hojas": ", ".join(item["hojas_detectadas"]),
+                            "PDF paginas": item["pdf_paginas"],
+                            "ZIP internos": len(item["zip_archivos_internos"]),
+                            "Warnings": " | ".join(item["warnings"]),
+                            "Errores": " | ".join(item["errores_detectados"]),
+                            "Resumen": item["resumen"],
+                        }
+                        for item in pre_docs
+                    ]
+                )
+                st.dataframe(tabla_pre, hide_index=True, use_container_width=True)
+                with st.expander("Detalle tecnico de columnas/ZIP por documento", expanded=False):
+                    for item in pre_docs:
+                        st.write(f"**{item['nombre_archivo']}**")
+                        if item["columnas_detectadas"]:
+                            st.caption("Columnas: " + ", ".join(item["columnas_detectadas"][:80]))
+                        if item["zip_archivos_internos"]:
+                            st.caption("ZIP: " + ", ".join(item["zip_archivos_internos"][:80]))
+        else:
+            st.info("Aun no hay preanalisis guardado para este expediente.")
+
         o1, o2 = st.columns(2)
         with o1:
             st.subheader("Errores de ingestion")
@@ -3752,6 +3830,31 @@ def render_bandeja_documental():
         c3.metric("Errores", stats["errores"])
         c4.metric("Emails procesados", stats["emails_procesados"])
         c5.metric("Storage", _bd_format_bytes(service.storage_size_bytes()))
+        st.metric("Preanalisis ejecutados", stats.get("preanalisis", 0))
+        recientes = repo.list_preanalisis_recientes(limit=10)
+        if recientes:
+            st.write("**Ultimos preanalisis**")
+            st.dataframe(pd.DataFrame(recientes), hide_index=True, use_container_width=True)
+        pre_stats = repo.preanalisis_stats()
+        s1, s2 = st.columns(2)
+        with s1:
+            st.write("**Proveedores mas detectados**")
+            if pre_stats["proveedores_mas_detectados"]:
+                st.dataframe(pd.DataFrame(pre_stats["proveedores_mas_detectados"]), hide_index=True, use_container_width=True)
+            else:
+                st.caption("Sin datos todavia.")
+            st.write("**Tipos ambiguos frecuentes**")
+            if pre_stats["tipos_ambiguos"]:
+                st.dataframe(pd.DataFrame(pre_stats["tipos_ambiguos"]), hide_index=True, use_container_width=True)
+            else:
+                st.caption("Sin ambiguos registrados.")
+        with s2:
+            st.write("**Documentos con mas errores recientes**")
+            if pre_stats["documentos_con_errores"]:
+                st.dataframe(pd.DataFrame(pre_stats["documentos_con_errores"]), hide_index=True, use_container_width=True)
+            else:
+                st.caption("Sin errores de preanalisis.")
+            st.metric("ZIPs corruptos detectados", pre_stats["zips_corruptos"])
         st.caption("Motor analitico y Gmail real no se ejecutan desde esta pantalla.")
 
 

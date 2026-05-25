@@ -102,12 +102,61 @@ class BandejaDocumentalRepository:
                     resultado_json TEXT NOT NULL DEFAULT '{}'
                 );
 
+                CREATE TABLE IF NOT EXISTS preanalisis_expediente (
+                    expediente_id TEXT PRIMARY KEY,
+                    fecha_ejecucion TEXT NOT NULL,
+                    estado_preanalisis TEXT NOT NULL,
+                    documentos_ok INTEGER NOT NULL DEFAULT 0,
+                    documentos_warning INTEGER NOT NULL DEFAULT 0,
+                    documentos_error INTEGER NOT NULL DEFAULT 0,
+                    proveedores_detectados_json TEXT NOT NULL DEFAULT '[]',
+                    warnings_globales_json TEXT NOT NULL DEFAULT '[]',
+                    errores_globales_json TEXT NOT NULL DEFAULT '[]',
+                    valido_global INTEGER NOT NULL DEFAULT 0,
+                    resultado_json TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS preanalisis_documento (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    expediente_id TEXT NOT NULL,
+                    documento_id TEXT NOT NULL,
+                    fecha_ejecucion TEXT NOT NULL,
+                    nombre_archivo TEXT NOT NULL,
+                    ruta_archivo TEXT NOT NULL DEFAULT '',
+                    extension TEXT NOT NULL DEFAULT '',
+                    tamano_bytes INTEGER NOT NULL DEFAULT 0,
+                    hash_archivo TEXT NOT NULL DEFAULT '',
+                    tipo_documental_esperado TEXT NOT NULL DEFAULT '',
+                    tipo_documental_detectado TEXT NOT NULL DEFAULT '',
+                    confianza_tipo REAL NOT NULL DEFAULT 0,
+                    proveedor_detectado TEXT NOT NULL DEFAULT '',
+                    confianza_proveedor REAL NOT NULL DEFAULT 0,
+                    formato_detectado TEXT NOT NULL DEFAULT '',
+                    encoding_detectado TEXT NOT NULL DEFAULT '',
+                    hojas_detectadas_json TEXT NOT NULL DEFAULT '[]',
+                    columnas_detectadas_json TEXT NOT NULL DEFAULT '[]',
+                    numero_filas INTEGER NOT NULL DEFAULT 0,
+                    numero_columnas INTEGER NOT NULL DEFAULT 0,
+                    pdf_paginas INTEGER NOT NULL DEFAULT 0,
+                    pdf_texto_extraible INTEGER NOT NULL DEFAULT 0,
+                    zip_archivos_internos_json TEXT NOT NULL DEFAULT '[]',
+                    errores_detectados_json TEXT NOT NULL DEFAULT '[]',
+                    warnings_json TEXT NOT NULL DEFAULT '[]',
+                    valido_para_analisis INTEGER NOT NULL DEFAULT 0,
+                    resumen TEXT NOT NULL DEFAULT '',
+                    estado_preanalisis TEXT NOT NULL DEFAULT ''
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_expedientes_estado ON expedientes(estado);
                 CREATE INDEX IF NOT EXISTS idx_expedientes_farmacia ON expedientes(farmacia);
                 CREATE INDEX IF NOT EXISTS idx_documentos_expediente ON documentos(expediente_id);
                 CREATE INDEX IF NOT EXISTS idx_documentos_expediente_hash ON documentos(expediente_id, hash_archivo);
                 CREATE INDEX IF NOT EXISTS idx_emails_message_id ON emails_procesados(message_id);
                 CREATE INDEX IF NOT EXISTS idx_errores_resuelto ON errores_ingestion(resuelto);
+                CREATE INDEX IF NOT EXISTS idx_preanalisis_exp_fecha ON preanalisis_expediente(fecha_ejecucion);
+                CREATE INDEX IF NOT EXISTS idx_preanalisis_doc_expediente ON preanalisis_documento(expediente_id);
+                CREATE INDEX IF NOT EXISTS idx_preanalisis_doc_proveedor ON preanalisis_documento(proveedor_detectado);
+                CREATE INDEX IF NOT EXISTS idx_preanalisis_doc_tipo ON preanalisis_documento(tipo_documental_detectado);
                 """
             )
             self._ensure_column(conn, "documentos", "fecha_eliminacion", "TEXT NOT NULL DEFAULT ''")
@@ -391,6 +440,200 @@ class BandejaDocumentalRepository:
                 ),
             )
 
+    def save_preanalisis_expediente(self, data: Dict[str, object]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO preanalisis_expediente (
+                    expediente_id, fecha_ejecucion, estado_preanalisis, documentos_ok,
+                    documentos_warning, documentos_error, proveedores_detectados_json,
+                    warnings_globales_json, errores_globales_json, valido_global, resultado_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(expediente_id) DO UPDATE SET
+                    fecha_ejecucion=excluded.fecha_ejecucion,
+                    estado_preanalisis=excluded.estado_preanalisis,
+                    documentos_ok=excluded.documentos_ok,
+                    documentos_warning=excluded.documentos_warning,
+                    documentos_error=excluded.documentos_error,
+                    proveedores_detectados_json=excluded.proveedores_detectados_json,
+                    warnings_globales_json=excluded.warnings_globales_json,
+                    errores_globales_json=excluded.errores_globales_json,
+                    valido_global=excluded.valido_global,
+                    resultado_json=excluded.resultado_json
+                """,
+                (
+                    data["expediente_id"],
+                    data["fecha_ejecucion"],
+                    data["estado_preanalisis"],
+                    int(data.get("documentos_ok", 0)),
+                    int(data.get("documentos_warning", 0)),
+                    int(data.get("documentos_error", 0)),
+                    json.dumps(data.get("proveedores_detectados", []), ensure_ascii=False),
+                    json.dumps(data.get("warnings_globales", []), ensure_ascii=False),
+                    json.dumps(data.get("errores_globales", []), ensure_ascii=False),
+                    1 if data.get("valido_global") else 0,
+                    json.dumps(data, ensure_ascii=False),
+                ),
+            )
+
+    def save_preanalisis_documento(self, data: Dict[str, object], fecha_ejecucion: str, estado_preanalisis: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM preanalisis_documento WHERE expediente_id=? AND documento_id=?",
+                (data["expediente_id"], data["documento_id"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO preanalisis_documento (
+                    expediente_id, documento_id, fecha_ejecucion, nombre_archivo, ruta_archivo,
+                    extension, tamano_bytes, hash_archivo, tipo_documental_esperado,
+                    tipo_documental_detectado, confianza_tipo, proveedor_detectado,
+                    confianza_proveedor, formato_detectado, encoding_detectado,
+                    hojas_detectadas_json, columnas_detectadas_json, numero_filas,
+                    numero_columnas, pdf_paginas, pdf_texto_extraible,
+                    zip_archivos_internos_json, errores_detectados_json, warnings_json,
+                    valido_para_analisis, resumen, estado_preanalisis
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data["expediente_id"],
+                    data["documento_id"],
+                    fecha_ejecucion,
+                    data.get("nombre_archivo", ""),
+                    data.get("ruta_archivo", ""),
+                    data.get("extension", ""),
+                    int(data.get("tamano_bytes", 0)),
+                    data.get("hash_archivo", ""),
+                    data.get("tipo_documental_esperado", ""),
+                    data.get("tipo_documental_detectado", ""),
+                    float(data.get("confianza_tipo", 0) or 0),
+                    data.get("proveedor_detectado", ""),
+                    float(data.get("confianza_proveedor", 0) or 0),
+                    data.get("formato_detectado", ""),
+                    data.get("encoding_detectado", ""),
+                    json.dumps(data.get("hojas_detectadas", []), ensure_ascii=False),
+                    json.dumps(data.get("columnas_detectadas", []), ensure_ascii=False),
+                    int(data.get("numero_filas", 0)),
+                    int(data.get("numero_columnas", 0)),
+                    int(data.get("pdf_paginas", 0)),
+                    1 if data.get("pdf_texto_extraible") else 0,
+                    json.dumps(data.get("zip_archivos_internos", []), ensure_ascii=False),
+                    json.dumps(data.get("errores_detectados", []), ensure_ascii=False),
+                    json.dumps(data.get("warnings", []), ensure_ascii=False),
+                    1 if data.get("valido_para_analisis") else 0,
+                    data.get("resumen", ""),
+                    estado_preanalisis,
+                ),
+            )
+
+    def get_preanalisis_expediente(self, expediente_id: str) -> Optional[Dict[str, object]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM preanalisis_expediente WHERE expediente_id=?",
+                (expediente_id,),
+            ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["proveedores_detectados"] = json.loads(data.pop("proveedores_detectados_json") or "[]")
+        data["warnings_globales"] = json.loads(data.pop("warnings_globales_json") or "[]")
+        data["errores_globales"] = json.loads(data.pop("errores_globales_json") or "[]")
+        data["valido_global"] = bool(data["valido_global"])
+        data["resultado"] = json.loads(data.pop("resultado_json") or "{}")
+        return data
+
+    def list_preanalisis_documentos(self, expediente_id: str) -> List[Dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM preanalisis_documento
+                WHERE expediente_id=?
+                ORDER BY fecha_ejecucion DESC, id DESC
+                """,
+                (expediente_id,),
+            ).fetchall()
+        return [self._row_to_preanalisis_documento(row) for row in rows]
+
+    def list_preanalisis_recientes(self, limit: int = 10) -> List[Dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM preanalisis_expediente
+                ORDER BY fecha_ejecucion DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        out = []
+        for row in rows:
+            data = dict(row)
+            data["proveedores_detectados"] = json.loads(data.pop("proveedores_detectados_json") or "[]")
+            data["warnings_globales"] = json.loads(data.pop("warnings_globales_json") or "[]")
+            data["errores_globales"] = json.loads(data.pop("errores_globales_json") or "[]")
+            data["valido_global"] = bool(data["valido_global"])
+            data.pop("resultado_json", None)
+            out.append(data)
+        return out
+
+    def preanalisis_stats(self) -> Dict[str, object]:
+        with self._connect() as conn:
+            proveedores = conn.execute(
+                """
+                SELECT proveedor_detectado, COUNT(*) AS total
+                FROM preanalisis_documento
+                WHERE proveedor_detectado != ''
+                GROUP BY proveedor_detectado
+                ORDER BY total DESC
+                LIMIT 10
+                """
+            ).fetchall()
+            errores = conn.execute(
+                """
+                SELECT nombre_archivo, errores_detectados_json
+                FROM preanalisis_documento
+                WHERE errores_detectados_json != '[]'
+                ORDER BY fecha_ejecucion DESC
+                LIMIT 10
+                """
+            ).fetchall()
+            ambiguos = conn.execute(
+                """
+                SELECT tipo_documental_detectado, COUNT(*) AS total
+                FROM preanalisis_documento
+                WHERE confianza_tipo < 0.45
+                GROUP BY tipo_documental_detectado
+                ORDER BY total DESC
+                LIMIT 10
+                """
+            ).fetchall()
+            zips_corruptos = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM preanalisis_documento
+                WHERE formato_detectado='zip' AND errores_detectados_json LIKE '%corrupto%'
+                """
+            ).fetchone()[0]
+        return {
+            "proveedores_mas_detectados": [dict(row) for row in proveedores],
+            "documentos_con_errores": [
+                {"nombre_archivo": row["nombre_archivo"], "errores": json.loads(row["errores_detectados_json"] or "[]")}
+                for row in errores
+            ],
+            "tipos_ambiguos": [dict(row) for row in ambiguos],
+            "zips_corruptos": zips_corruptos,
+        }
+
+    def _row_to_preanalisis_documento(self, row: sqlite3.Row) -> Dict[str, object]:
+        data = dict(row)
+        data["hojas_detectadas"] = json.loads(data.pop("hojas_detectadas_json") or "[]")
+        data["columnas_detectadas"] = json.loads(data.pop("columnas_detectadas_json") or "[]")
+        data["zip_archivos_internos"] = json.loads(data.pop("zip_archivos_internos_json") or "[]")
+        data["errores_detectados"] = json.loads(data.pop("errores_detectados_json") or "[]")
+        data["warnings"] = json.loads(data.pop("warnings_json") or "[]")
+        data["pdf_texto_extraible"] = bool(data["pdf_texto_extraible"])
+        data["valido_para_analisis"] = bool(data["valido_para_analisis"])
+        return data
+
     def stats(self) -> Dict[str, int]:
         with self._connect() as conn:
             return {
@@ -399,4 +642,5 @@ class BandejaDocumentalRepository:
                 "errores": conn.execute("SELECT COUNT(*) FROM errores_ingestion").fetchone()[0],
                 "errores_pendientes": conn.execute("SELECT COUNT(*) FROM errores_ingestion WHERE resuelto=0").fetchone()[0],
                 "emails_procesados": conn.execute("SELECT COUNT(*) FROM emails_procesados").fetchone()[0],
+                "preanalisis": conn.execute("SELECT COUNT(*) FROM preanalisis_expediente").fetchone()[0],
             }
