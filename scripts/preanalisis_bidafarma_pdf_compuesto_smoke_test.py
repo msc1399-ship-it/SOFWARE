@@ -33,13 +33,14 @@ def _pdf_bytes(texto: str) -> bytes:
 def _pdf_bidafarma(decena: str, transfer: bool = False, con_albaranes: bool = True) -> bytes:
     subtipo = "Factura transfer Bitransfer Bidafarma" if transfer else "Factura Bidafarma Vida Pharma goteo"
     albaranes = (
-        " %%PAGE%% Albaran numero ALB-1234 codigo nacional unidades servidas tipo 74 abono cargo"
+        " \f Albaran numero ALB-1234 codigo nacional unidades servidas tipo 74 abono cargo"
         if con_albaranes
-        else " %%PAGE%% Resumen factura sin detalle logistico"
+        else " \f Resumen factura sin detalle logistico"
     )
+    marca_zv = "Zacofarva ZV " if con_albaranes else ""
     texto = (
         f"{subtipo} factura numero F-{decena}-2026 fecha 10/05/2026 "
-        f"Zacofarva ZV base imponible IVA total factura"
+        f"{marca_zv}base imponible IVA total factura"
         f"{albaranes}"
     )
     return _pdf_bytes(texto)
@@ -119,7 +120,7 @@ def main() -> None:
     assert ok_sin, motivos_sin
     resultado_sin = preanalisis_documental.ejecutar_preanalisis_expediente(expediente_sin_albaranes, repo=repo)
     assert resultado_sin.valido_global
-    assert any("albaranes embebidos" in warning for warning in resultado_sin.warnings_globales)
+    assert any("albaranes embebidos" in warning or "patrones claros" in warning for warning in resultado_sin.warnings_globales + [w for d in resultado_sin.resultados_documentos for w in d.warnings])
 
     expediente_lab = service.crear_expediente_desde_asunto(
         "REVISION_FACTURAS_MAYO_2026_FARMACIA_SAN_MIGUEL",

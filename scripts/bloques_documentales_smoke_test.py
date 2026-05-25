@@ -27,7 +27,7 @@ def _stock() -> bytes:
 
 
 def _pdf_bidafarma() -> bytes:
-    texto = "Factura Bidafarma Vida Pharma numero F-1 fecha 01/05/2026 %%PAGE%% Albaran numero A-1 codigo nacional tipo 74 abono"
+    texto = "Factura Bidafarma Vida Pharma numero F-1 fecha 01/05/2026 \f Albaran numero A-1 codigo nacional tipo 74 abono"
     return (
         b"%PDF-1.4\n"
         b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"

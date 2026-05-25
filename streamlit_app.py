@@ -3784,7 +3784,10 @@ def render_bandeja_documental():
                             "Albaranes": bool(item.get("contiene_albaranes")),
                             "Paginas factura": item.get("paginas_factura", []),
                             "Paginas albaranes": item.get("paginas_albaranes", []),
+                            "N albaranes": item.get("numero_albaranes_detectados", item.get("albaranes_detectados_count", 0)),
+                            "Tipos albaran": " | ".join(item.get("tipos_albaran_detectados", [])),
                             "N factura": item.get("numero_factura", ""),
+                            "Periodo": item.get("periodo_detectado", ""),
                             "Fechas": " | ".join(item.get("fechas_detectadas", [])),
                             "Liquidaciones": " | ".join(item.get("posibles_liquidaciones_detectadas", [])),
                             "Formato": item["formato_detectado"],
@@ -3808,6 +3811,8 @@ def render_bandeja_documental():
                             st.caption("Columnas: " + ", ".join(item["columnas_detectadas"][:80]))
                         if item["zip_archivos_internos"]:
                             st.caption("ZIP: " + ", ".join(item["zip_archivos_internos"][:80]))
+                        if item.get("texto_extraido_resumido"):
+                            st.caption("Texto PDF: " + item["texto_extraido_resumido"])
         else:
             st.info("Aun no hay preanalisis guardado para este expediente.")
 

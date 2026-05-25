@@ -157,8 +157,12 @@ class BandejaDocumentalRepository:
                     paginas_albaranes_json TEXT NOT NULL DEFAULT '[]',
                     numero_factura TEXT NOT NULL DEFAULT '',
                     fechas_detectadas_json TEXT NOT NULL DEFAULT '[]',
+                    periodo_detectado TEXT NOT NULL DEFAULT '',
                     albaranes_detectados_count INTEGER NOT NULL DEFAULT 0,
-                    posibles_liquidaciones_detectadas_json TEXT NOT NULL DEFAULT '[]'
+                    numero_albaranes_detectados INTEGER NOT NULL DEFAULT 0,
+                    tipos_albaran_detectados_json TEXT NOT NULL DEFAULT '[]',
+                    posibles_liquidaciones_detectadas_json TEXT NOT NULL DEFAULT '[]',
+                    texto_extraido_resumido TEXT NOT NULL DEFAULT ''
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_expedientes_estado ON expedientes(estado);
@@ -188,8 +192,12 @@ class BandejaDocumentalRepository:
             self._ensure_column(conn, "preanalisis_documento", "paginas_albaranes_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "preanalisis_documento", "numero_factura", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "preanalisis_documento", "fechas_detectadas_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "preanalisis_documento", "periodo_detectado", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "preanalisis_documento", "albaranes_detectados_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "preanalisis_documento", "numero_albaranes_detectados", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "preanalisis_documento", "tipos_albaran_detectados_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "preanalisis_documento", "posibles_liquidaciones_detectadas_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "preanalisis_documento", "texto_extraido_resumido", "TEXT NOT NULL DEFAULT ''")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -530,9 +538,10 @@ class BandejaDocumentalRepository:
                     valido_para_analisis, resumen, estado_preanalisis, perfil_documental,
                     subtipo_documental, pdf_compuesto, contiene_factura, contiene_albaranes,
                     paginas_factura_json, paginas_albaranes_json, numero_factura,
-                    fechas_detectadas_json, albaranes_detectados_count,
-                    posibles_liquidaciones_detectadas_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    fechas_detectadas_json, periodo_detectado, albaranes_detectados_count,
+                    numero_albaranes_detectados, tipos_albaran_detectados_json,
+                    posibles_liquidaciones_detectadas_json, texto_extraido_resumido
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["expediente_id"],
@@ -571,8 +580,12 @@ class BandejaDocumentalRepository:
                     json.dumps(data.get("paginas_albaranes", []), ensure_ascii=False),
                     data.get("numero_factura", ""),
                     json.dumps(data.get("fechas_detectadas", []), ensure_ascii=False),
+                    data.get("periodo_detectado", ""),
                     int(data.get("albaranes_detectados_count", 0) or 0),
+                    int(data.get("numero_albaranes_detectados", data.get("albaranes_detectados_count", 0)) or 0),
+                    json.dumps(data.get("tipos_albaran_detectados", []), ensure_ascii=False),
                     json.dumps(data.get("posibles_liquidaciones_detectadas", []), ensure_ascii=False),
+                    data.get("texto_extraido_resumido", ""),
                 ),
             )
 
@@ -685,6 +698,7 @@ class BandejaDocumentalRepository:
         data["paginas_factura"] = json.loads(data.pop("paginas_factura_json", "[]") or "[]")
         data["paginas_albaranes"] = json.loads(data.pop("paginas_albaranes_json", "[]") or "[]")
         data["fechas_detectadas"] = json.loads(data.pop("fechas_detectadas_json", "[]") or "[]")
+        data["tipos_albaran_detectados"] = json.loads(data.pop("tipos_albaran_detectados_json", "[]") or "[]")
         data["posibles_liquidaciones_detectadas"] = json.loads(data.pop("posibles_liquidaciones_detectadas_json", "[]") or "[]")
         data["pdf_texto_extraible"] = bool(data["pdf_texto_extraible"])
         data["valido_para_analisis"] = bool(data["valido_para_analisis"])

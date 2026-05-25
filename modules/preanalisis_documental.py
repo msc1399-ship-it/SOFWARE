@@ -59,8 +59,12 @@ class ResultadoPreanalisisDocumento:
     paginas_albaranes: List[int] = field(default_factory=list)
     numero_factura: str = ""
     fechas_detectadas: List[str] = field(default_factory=list)
+    periodo_detectado: str = ""
     albaranes_detectados_count: int = 0
+    numero_albaranes_detectados: int = 0
+    tipos_albaran_detectados: List[str] = field(default_factory=list)
     posibles_liquidaciones_detectadas: List[str] = field(default_factory=list)
+    texto_extraido_resumido: str = ""
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -116,6 +120,7 @@ COLUMN_HINTS = {
 
 SUBTIPO_BIDAFARMA_NORMAL_GOTEO = "BIDAFARMA_NORMAL_GOTEO"
 SUBTIPO_BIDAFARMA_TRANSFER = "BIDAFARMA_TRANSFER"
+SUBTIPO_BIDAFARMA_MIXTO = "BIDAFARMA_MIXTO"
 SUBTIPO_BIDAFARMA_OTROS = "BIDAFARMA_OTROS"
 
 
@@ -268,8 +273,12 @@ def _analizar_csv(path: Path, resultado: ResultadoPreanalisisDocumento) -> None:
 def _analizar_pdf(path: Path, resultado: ResultadoPreanalisisDocumento) -> None:
     resultado.formato_detectado = "pdf"
     contenido = path.read_bytes()
+    if not contenido.lstrip().startswith(b"%PDF"):
+        resultado.errores_detectados.append("PDF ilegible o corrupto: cabecera PDF no detectada.")
+        return
     resultado.pdf_paginas = max(1, len(re.findall(rb"/Type\s*/Page\b", contenido)))
-    texto = _extraer_texto_pdf_basico(contenido)
+    paginas_texto = _extraer_paginas_pdf_basico(contenido)
+    texto = "\f".join(paginas_texto) if paginas_texto else ""
     resultado.pdf_texto_extraible = len(texto.strip()) >= 20
     if not resultado.pdf_texto_extraible:
         resultado.warnings.append("PDF sin texto extraible; podria ser escaneado.")
@@ -279,7 +288,9 @@ def _analizar_pdf(path: Path, resultado: ResultadoPreanalisisDocumento) -> None:
     resultado.hojas_detectadas = []
     resultado.warnings.extend(_warnings_pdf_texto(texto))
     resultado._texto_detectado = texto  # type: ignore[attr-defined]
-    _analizar_pdf_bidafarma(resultado, texto)
+    resultado._paginas_texto_detectadas = paginas_texto  # type: ignore[attr-defined]
+    resultado.texto_extraido_resumido = _resumir_texto(texto)
+    preanalizar_pdf_bidafarma(resultado, texto)
     _analizar_pdf_laboratorio(resultado, texto)
 
 
@@ -466,6 +477,79 @@ def _columnas_contienen(doc: ResultadoPreanalisisDocumento, tokens: Tuple[str, .
     return any(token in texto for token in tokens)
 
 
+def preanalizar_pdf_bidafarma(resultado: ResultadoPreanalisisDocumento, texto: str) -> None:
+    evidencia = bd.normalizar_texto(f"{resultado.nombre_archivo} {texto}")
+    if not any(token in evidencia for token in ("bidafarma", "vida pharma", "bitransfer", "goteo", "zacofarva", "zv")):
+        return
+
+    paginas = getattr(resultado, "_paginas_texto_detectadas", None) or _paginas_texto_pdf(texto, max(1, resultado.pdf_paginas))
+    resultado.pdf_compuesto = True
+    resultado.contiene_factura = "factura" in evidencia
+    resultado.contiene_albaranes = any(
+        token in evidencia for token in ("albaran", "albaranes", "albarán", "pedido", "tipo 74", "zv")
+    )
+    resultado.paginas_factura = [
+        idx for idx, pagina in enumerate(paginas, start=1)
+        if "factura" in bd.normalizar_texto(pagina)
+    ]
+    resultado.paginas_albaranes = [
+        idx for idx, pagina in enumerate(paginas, start=1)
+        if any(token in bd.normalizar_texto(pagina) for token in ("albaran", "albaranes", "albarán", "pedido", "tipo 74", "zv"))
+    ]
+    if resultado.paginas_albaranes:
+        primera_albaran = min(resultado.paginas_albaranes)
+        resultado.paginas_factura = [idx for idx in resultado.paginas_factura if idx < primera_albaran] or list(range(1, primera_albaran))
+    if not resultado.paginas_factura and resultado.contiene_factura:
+        resultado.paginas_factura = [1]
+    if not resultado.paginas_albaranes and resultado.contiene_albaranes:
+        resultado.paginas_albaranes = [idx for idx in range(2, resultado.pdf_paginas + 1)] or [1]
+
+    albaranes = re.findall(
+        r"(?:albar[aá]n|alb\.?|pedido)\s*(?:n[ºo.]*)?\s*([A-Z0-9/-]{2,})",
+        evidencia,
+        flags=re.I,
+    )
+    resultado.albaranes_detectados_count = _count_distinct(albaranes)
+    resultado.numero_albaranes_detectados = resultado.albaranes_detectados_count
+    resultado.tipos_albaran_detectados = _dedupe_preserve(
+        match.upper() for match in re.findall(r"(?:tipo|tp)\s*([0-9]{2})", evidencia, flags=re.I)
+    )
+    resultado.numero_factura = _first_match(
+        evidencia,
+        [
+            r"factura\s*(?:n[ºo.]*)?\s*([A-Z0-9/-]{3,})",
+            r"n[ºo.]*\s*factura\s*([A-Z0-9/-]{3,})",
+        ],
+    )
+    resultado.fechas_detectadas = _dedupe_preserve(re.findall(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", evidencia))
+    resultado.periodo_detectado = _detectar_periodo(resultado.fechas_detectadas, evidencia)
+    resultado.posibles_liquidaciones_detectadas = _dedupe_preserve(
+        token for token in ("tipo 74", "abono", "regularizacion", "regularización", "cargo", "liquidacion", "liquidación")
+        if token in evidencia
+    )
+
+    hay_transfer = any(token in evidencia for token in ("transfer", "bitransfer"))
+    hay_goteo = "goteo" in evidencia
+    if hay_transfer and hay_goteo:
+        resultado.subtipo_documental = SUBTIPO_BIDAFARMA_MIXTO
+    elif hay_transfer:
+        resultado.subtipo_documental = SUBTIPO_BIDAFARMA_TRANSFER
+    elif any(token in evidencia for token in ("goteo", "factura", "albaran", "albarán")):
+        resultado.subtipo_documental = SUBTIPO_BIDAFARMA_NORMAL_GOTEO
+    else:
+        resultado.subtipo_documental = SUBTIPO_BIDAFARMA_OTROS
+
+    if resultado.contiene_factura and resultado.contiene_albaranes:
+        resultado.tipo_documental_detectado = bd.TipoDocumento.FACTURAS.value
+        resultado.confianza_tipo = max(resultado.confianza_tipo, 0.9)
+        resultado.proveedor_detectado = "Bidafarma"
+        resultado.confianza_proveedor = max(resultado.confianza_proveedor, 0.95)
+    elif resultado.contiene_factura:
+        resultado.warnings.append(
+            "Warning suave: PDF Bidafarma legible con factura, pero sin patrones claros de albaranes embebidos. Revisar manualmente."
+        )
+
+
 
 
 def _analizar_pdf_bidafarma(resultado: ResultadoPreanalisisDocumento, texto: str) -> None:
@@ -593,6 +677,39 @@ def _extraer_texto_pdf_basico(contenido: bytes) -> str:
     textos_parentesis = re.findall(r"\(([^)]{2,})\)", texto)
     if textos_parentesis:
         return " ".join(textos_parentesis)
+    return ""
+
+
+def _extraer_paginas_pdf_basico(contenido: bytes) -> List[str]:
+    texto = contenido.decode("latin-1", errors="ignore")
+    textos_parentesis = re.findall(r"\(([^)]{1,})\)", texto)
+    if not textos_parentesis:
+        return []
+    combinado = "\f".join(textos_parentesis)
+    paginas = _paginas_texto_pdf(combinado, max(1, combinado.count("\f") + 1))
+    return [pagina.strip() for pagina in paginas if pagina.strip()]
+
+
+def _resumir_texto(texto: str, limite: int = 700) -> str:
+    limpio = re.sub(r"\s+", " ", texto).strip()
+    return limpio[:limite]
+
+
+def _detectar_periodo(fechas: List[str], evidencia: str) -> str:
+    trimestre = re.search(r"\b([1-4]t)\b", evidencia, flags=re.I)
+    if trimestre:
+        return trimestre.group(1).upper()
+    meses = [
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    ]
+    for mes in meses:
+        if mes in evidencia:
+            return mes.upper()
+    if fechas:
+        partes = re.split(r"[/-]", fechas[0])
+        if len(partes) >= 2:
+            return f"MES_{partes[1].zfill(2)}"
     return ""
 
 
