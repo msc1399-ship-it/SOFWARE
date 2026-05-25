@@ -64,6 +64,7 @@ def main() -> None:
             ),
             ("albaran_corrupto.zip", b"esto no es un zip"),
             ("liquidacion_transfer.pdf", _pdf_bytes("Liquidacion Bidafarma transfer goteo descuento")),
+            ("stock_periodo.xlsx", _xlsx_bytes(pd.DataFrame({"codigo nacional": ["123"], "unidades stock": [4], "pvp": [10]}))),
         ],
     )
     for error in repo.list_errores(expediente_id, solo_pendientes=True):
@@ -93,6 +94,7 @@ def main() -> None:
         [
             ("compras_bidafarma.xlsx", _xlsx_bytes(pd.DataFrame({"proveedor": ["Bidafarma"], "compra": [10], "coste": [5.3]}))),
             ("ventas.csv", b"ticket;fecha;importe venta\n1;2026-05-01;12.4\n"),
+            ("stock.csv", b"codigo nacional;unidades stock;pvp\n1;5;10\n"),
             ("factura.pdf", _pdf_bytes("Factura laboratorio NIF IVA base imponible total factura")),
             ("albaran_bidafarma.zip", _zip_bytes()),
             ("liquidacion.pdf", _pdf_bytes("Liquidacion Bidafarma transfer goteo descuento")),

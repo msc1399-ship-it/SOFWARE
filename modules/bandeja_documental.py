@@ -48,6 +48,34 @@ class PerfilDocumental(str, Enum):
     GENERICO = "GENERICO"
 
 
+class BloqueDocumental(str, Enum):
+    COMPRAS_PROVEEDOR = "COMPRAS_PROVEEDOR"
+    VENTAS = "VENTAS"
+    STOCK = "STOCK"
+    ALBARANES_SEPARADOS = "ALBARANES_SEPARADOS"
+    LIQUIDACIONES_SEPARADAS = "LIQUIDACIONES_SEPARADAS"
+    FACTURAS_LABORATORIO = "FACTURAS_LABORATORIO"
+    OTROS = "OTROS"
+
+
+BLOQUES_MINIMOS_ASESORIA = [
+    BloqueDocumental.COMPRAS_PROVEEDOR.value,
+    BloqueDocumental.VENTAS.value,
+    BloqueDocumental.STOCK.value,
+]
+
+BLOQUES_MINIMOS_PROVEEDOR = [
+    BloqueDocumental.COMPRAS_PROVEEDOR.value,
+]
+
+BLOQUES_OPCIONALES = [
+    BloqueDocumental.ALBARANES_SEPARADOS.value,
+    BloqueDocumental.LIQUIDACIONES_SEPARADAS.value,
+    BloqueDocumental.FACTURAS_LABORATORIO.value,
+    BloqueDocumental.OTROS.value,
+]
+
+
 EXTENSIONES_ADMITIDAS = {".xlsx", ".xls", ".csv", ".pdf", ".zip"}
 
 CARPETAS_TIPO_DOCUMENTO = {
@@ -214,10 +242,45 @@ def parsear_asunto(asunto: str) -> Dict[str, object]:
             "farmacia": farmacia.replace("FARMACIA_", "").replace("_", " ").title(),
         }
 
+    revision_proveedor = re.fullmatch(r"REVISION_PROVEEDOR_([A-Z0-9_]+)_([A-Z0-9]+)_(20\d{2})", asunto, re.I)
+    if revision_proveedor:
+        proveedor, periodo, ano = revision_proveedor.groups()
+        return {
+            "tipo_servicio": "REVISION_PROVEEDOR",
+            "periodo": periodo.upper(),
+            "ano": int(ano),
+            "farmacia": proveedor.replace("_", " ").title(),
+            "proveedor_objetivo": proveedor.upper(),
+        }
+
+    analisis_compras = re.fullmatch(r"ANALISIS_COMPRAS_([A-Z0-9_]+)_([A-Z0-9]+)_(20\d{2})", asunto, re.I)
+    if analisis_compras:
+        proveedor, periodo, ano = analisis_compras.groups()
+        return {
+            "tipo_servicio": "ANALISIS_COMPRAS",
+            "periodo": periodo.upper(),
+            "ano": int(ano),
+            "farmacia": proveedor.replace("_", " ").title(),
+            "proveedor_objetivo": proveedor.upper(),
+        }
+
+    revision_facturas_proveedor = re.fullmatch(r"REVISION_FACTURAS_([A-Z0-9_]+)_([A-Z0-9]+)_(20\d{2})", asunto, re.I)
+    if revision_facturas_proveedor:
+        proveedor, periodo, ano = revision_facturas_proveedor.groups()
+        return {
+            "tipo_servicio": "REVISION_FACTURAS_PROVEEDOR",
+            "periodo": periodo.upper(),
+            "ano": int(ano),
+            "farmacia": proveedor.replace("_", " ").title(),
+            "proveedor_objetivo": proveedor.upper(),
+        }
+
     raise ValueError(
         "Asunto no valido. Usa formatos como ASESORIA_2T_2026_FARMACIA_SAN_MIGUEL, "
         "AUDITORIA_INICIAL_2026_FARMACIA_SAN_MIGUEL o "
-        "REVISION_FACTURAS_MAYO_2026_FARMACIA_SAN_MIGUEL."
+        "REVISION_FACTURAS_MAYO_2026_FARMACIA_SAN_MIGUEL. Tambien se aceptan "
+        "REVISION_PROVEEDOR_BIDAFARMA_MAYO_2026, ANALISIS_COMPRAS_BIDAFARMA_2T_2026 "
+        "o REVISION_FACTURAS_BIDAFARMA_MAYO_2026."
     )
 
 
@@ -233,7 +296,17 @@ def crear_expediente(asunto: str, cliente: str, email_remitente: str = "") -> Ex
         ]
     )
     expediente_id = f"EXP-{farmacia_slug}-{datos['tipo_servicio']}-{datos['periodo']}-{datos['ano']}".upper()
-    checklist = checklist_para_servicio(str(datos["tipo_servicio"]))
+    checklist = bloques_minimos_para_servicio(str(datos["tipo_servicio"]))
+    perfil = PerfilDocumental.GENERICO.value
+    proveedor_objetivo = normalizar_texto(str(datos.get("proveedor_objetivo", "")))
+    if "bidafarma" in proveedor_objetivo or "vida" in proveedor_objetivo:
+        perfil = PerfilDocumental.BIDAFARMA.value
+    elif "cofares" in proveedor_objetivo:
+        perfil = PerfilDocumental.COFARES.value
+    elif "alliance" in proveedor_objetivo:
+        perfil = PerfilDocumental.ALLIANCE.value
+    elif "hefame" in proveedor_objetivo:
+        perfil = PerfilDocumental.HEFAME.value
     ahora = ahora_iso()
     return ExpedienteDocumental(
         expediente_id=expediente_id,
@@ -249,6 +322,7 @@ def crear_expediente(asunto: str, cliente: str, email_remitente: str = "") -> Ex
         documentos_faltantes=checklist,
         fecha_ultima_actualizacion=ahora,
         dedupe_key=dedupe_key,
+        perfil_documental=perfil,
     )
 
 
@@ -264,3 +338,15 @@ def tipos_recibidos_y_faltantes(tipo_servicio: str, documentos: Iterable[Dict[st
     )
     faltantes = [tipo for tipo in obligatorios if tipo not in recibidos]
     return recibidos, faltantes
+
+
+def es_analisis_especifico_proveedor(tipo_servicio: str) -> bool:
+    return tipo_servicio in {"REVISION_PROVEEDOR", "ANALISIS_COMPRAS", "REVISION_FACTURAS_PROVEEDOR"}
+
+
+def bloques_minimos_para_servicio(tipo_servicio: str) -> List[str]:
+    if es_analisis_especifico_proveedor(tipo_servicio):
+        return list(BLOQUES_MINIMOS_PROVEEDOR)
+    if tipo_servicio == "ASESORIA":
+        return list(BLOQUES_MINIMOS_ASESORIA)
+    return checklist_para_servicio(tipo_servicio) or list(BLOQUES_MINIMOS_ASESORIA)

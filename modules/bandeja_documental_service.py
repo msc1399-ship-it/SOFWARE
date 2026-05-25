@@ -81,7 +81,8 @@ class BandejaDocumentalService:
         duplicados: List[str] = []
         errores: List[str] = []
 
-        for nombre_original, contenido in archivos:
+        archivos_expandidos = self._expandir_zips(archivos)
+        for nombre_original, contenido in archivos_expandidos:
             extension = Path(nombre_original).suffix.lower()
             if not bd.extension_valida(nombre_original):
                 detalle = f"Extension no admitida: {extension or 'sin extension'}"
@@ -115,7 +116,11 @@ class BandejaDocumentalService:
             tipo = bd.clasificar_documento(nombre_original)
             reemplaza = ""
             perfil = str(expediente.get("perfil_documental", bd.PerfilDocumental.GENERICO.value))
-            permite_multiples = perfil == bd.PerfilDocumental.BIDAFARMA.value or extension == ".pdf"
+            permite_multiples = (
+                perfil == bd.PerfilDocumental.BIDAFARMA.value
+                or extension in {".pdf", ".zip"}
+                or "::" in nombre_original
+            )
             anterior = None if permite_multiples else self.repo.get_documento_activo_por_tipo(expediente_id, tipo)
             if anterior:
                 reemplaza = str(anterior["id_documento"])
@@ -157,6 +162,29 @@ class BandejaDocumentalService:
             "estado_final": estado,
         }
 
+    def _expandir_zips(self, archivos: List[Tuple[str, bytes]]) -> List[Tuple[str, bytes]]:
+        expandidos: List[Tuple[str, bytes]] = []
+        for nombre_original, contenido in archivos:
+            extension = Path(nombre_original).suffix.lower()
+            if extension != ".zip":
+                expandidos.append((nombre_original, contenido))
+                continue
+            expandidos.append((nombre_original, contenido))
+            try:
+                import io
+
+                with zipfile.ZipFile(io.BytesIO(contenido)) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        interno = Path(info.filename)
+                        if interno.suffix.lower() not in bd.EXTENSIONES_ADMITIDAS or interno.suffix.lower() == ".zip":
+                            continue
+                        expandidos.append((f"{Path(nombre_original).stem}::{interno.name}", zf.read(info)))
+            except zipfile.BadZipFile:
+                logger.warning("documental.zip_corrupto", extra={"archivo": nombre_original})
+        return expandidos
+
     def _ruta_destino(self, expediente: Dict[str, object], tipo: str, nombre_original: str, hash_archivo: str) -> Tuple[Path, str]:
         farmacia_slug = bd.slugify(str(expediente["farmacia"]))
         servicio_periodo = bd.slugify(f"{expediente['tipo_servicio']}_{expediente['periodo']}")
@@ -181,7 +209,9 @@ class BandejaDocumentalService:
         if not expediente:
             raise ValueError(f"Expediente no encontrado: {expediente_id}")
         documentos = self.repo.list_documentos(expediente_id, include_deleted=False)
-        recibidos, faltantes = self._recibidos_faltantes_por_perfil(expediente, documentos)
+        evaluacion = self.evaluar_bloques_documentales(expediente_id)
+        recibidos = evaluacion["bloques_recibidos"]
+        faltantes = evaluacion["bloques_faltantes"]
         incorrectos = [
             doc for doc in documentos
             if doc.get("estado_documento") == bd.EstadoDocumento.INCORRECTO.value
@@ -216,10 +246,11 @@ class BandejaDocumentalService:
         if not expediente:
             return False, ["Expediente no encontrado"]
         documentos = self.repo.list_documentos(expediente_id, include_deleted=False)
-        _, faltantes = self._recibidos_faltantes_por_perfil(expediente, documentos)
+        evaluacion = self.evaluar_bloques_documentales(expediente_id)
+        faltantes = evaluacion["bloques_faltantes"]
         motivos = []
         if faltantes:
-            motivos.append("Faltan documentos obligatorios: " + ", ".join(faltantes))
+            motivos.append("Faltan bloques documentales minimos: " + ", ".join(faltantes))
         if self.repo.count_errores_pendientes(expediente_id):
             motivos.append("Hay errores de ingestion pendientes")
         incorrectos = [
@@ -236,53 +267,123 @@ class BandejaDocumentalService:
         expediente: Dict[str, object],
         documentos: List[Dict[str, object]],
     ) -> Tuple[List[str], List[str]]:
+        evaluacion = self._evaluar_bloques_desde_documentos(expediente, documentos)
+        return evaluacion["bloques_recibidos"], evaluacion["bloques_faltantes"]
+
+    def evaluar_bloques_documentales(self, expediente_id: str) -> Dict[str, object]:
+        expediente = self.repo.get_expediente(expediente_id)
+        if not expediente:
+            raise ValueError(f"Expediente no encontrado: {expediente_id}")
+        documentos = self.repo.list_documentos(expediente_id, include_deleted=False)
+        return self._evaluar_bloques_desde_documentos(expediente, documentos)
+
+    def _evaluar_bloques_desde_documentos(
+        self,
+        expediente: Dict[str, object],
+        documentos: List[Dict[str, object]],
+    ) -> Dict[str, object]:
         perfil = str(expediente.get("perfil_documental", bd.PerfilDocumental.GENERICO.value))
+        tipo_servicio = str(expediente.get("tipo_servicio", ""))
+        especifico_proveedor = bd.es_analisis_especifico_proveedor(tipo_servicio)
         activos = [
             doc for doc in documentos
             if doc.get("estado_documento") == bd.EstadoDocumento.RECIBIDO.value
         ]
-        if perfil == bd.PerfilDocumental.BIDAFARMA.value:
-            tiene_ventas = any(
-                doc.get("extension") in {".xlsx", ".xls", ".csv"}
-                and (
-                    doc.get("tipo_documental") == bd.TipoDocumento.VENTAS.value
-                    or "venta" in bd.normalizar_texto(str(doc.get("nombre_original", "")))
-                )
-                for doc in activos
-            )
-            tiene_pdf_bidafarma = any(
-                doc.get("extension") == ".pdf"
-                and (
-                    doc.get("tipo_documental") in {
-                        bd.TipoDocumento.FACTURAS.value,
-                        bd.TipoDocumento.ALBARANES.value,
-                        bd.TipoDocumento.LIQUIDACIONES.value,
-                        bd.TipoDocumento.OTROS.value,
-                    }
-                )
-                and any(
-                    token in bd.normalizar_texto(str(doc.get("nombre_original", "")))
-                    for token in ("bidafarma", "vida", "pharma", "goteo", "transfer", "bitransfer", "factura", "albaran")
-                )
-                for doc in activos
-            )
-            recibidos = []
-            faltantes = []
-            if tiene_ventas:
-                recibidos.append("Ventas Excel")
-            else:
-                faltantes.append("Ventas Excel")
-            if tiene_pdf_bidafarma:
-                recibidos.append("PDF Bidafarma con factura/albaranes embebidos")
-            else:
-                faltantes.append("PDF Bidafarma compuesto")
-            return recibidos, faltantes
-
+        if tipo_servicio != "ASESORIA" and not especifico_proveedor and perfil != bd.PerfilDocumental.LABORATORIOS.value:
+            recibidos, faltantes = bd.tipos_recibidos_y_faltantes(tipo_servicio, documentos)
+            return {
+                "perfil_documental": perfil,
+                "analisis_especifico_proveedor": False,
+                "bloques": {tipo: tipo in recibidos for tipo in bd.checklist_para_servicio(tipo_servicio)},
+                "bloques_recibidos": recibidos,
+                "bloques_faltantes": faltantes,
+                "bloques_obligatorios": bd.checklist_para_servicio(tipo_servicio),
+                "bloques_opcionales": bd.BLOQUES_OPCIONALES,
+                "avisos": [],
+            }
+        tiene_compras = any(self._doc_satisface_compras(doc, perfil) for doc in activos)
+        tiene_ventas = any(self._doc_satisface_ventas(doc) for doc in activos)
+        tiene_stock = any(self._doc_satisface_stock(doc) for doc in activos)
         if perfil == bd.PerfilDocumental.LABORATORIOS.value:
-            tiene_pdf = any(doc.get("extension") == ".pdf" for doc in activos)
-            return (["PDF facturas laboratorio"] if tiene_pdf else [], [] if tiene_pdf else ["PDF facturas laboratorio"])
+            tiene_pdf = any(str(doc.get("extension", "")).lower() == ".pdf" for doc in activos)
+            return {
+                "perfil_documental": perfil,
+                "analisis_especifico_proveedor": especifico_proveedor,
+                "bloques": {bd.BloqueDocumental.FACTURAS_LABORATORIO.value: tiene_pdf},
+                "bloques_recibidos": [bd.BloqueDocumental.FACTURAS_LABORATORIO.value] if tiene_pdf else [],
+                "bloques_faltantes": [] if tiene_pdf else [bd.BloqueDocumental.FACTURAS_LABORATORIO.value],
+                "bloques_obligatorios": [bd.BloqueDocumental.FACTURAS_LABORATORIO.value],
+                "bloques_opcionales": [bd.BloqueDocumental.OTROS.value],
+                "avisos": ["Perfil laboratorio: PDFs aceptados aunque sean escaneados; no bloquea OCR en esta fase."],
+            }
+        opcionales = {
+            bd.BloqueDocumental.ALBARANES_SEPARADOS.value: any(
+                doc.get("tipo_documental") == bd.TipoDocumento.ALBARANES.value for doc in activos
+            ),
+            bd.BloqueDocumental.LIQUIDACIONES_SEPARADAS.value: any(
+                doc.get("tipo_documental") == bd.TipoDocumento.LIQUIDACIONES.value for doc in activos
+            ),
+            bd.BloqueDocumental.FACTURAS_LABORATORIO.value: any(
+                "laboratorio" in bd.normalizar_texto(str(doc.get("nombre_original", ""))) for doc in activos
+            ),
+        }
+        bloques = {
+            bd.BloqueDocumental.COMPRAS_PROVEEDOR.value: tiene_compras,
+            bd.BloqueDocumental.VENTAS.value: tiene_ventas,
+            bd.BloqueDocumental.STOCK.value: tiene_stock,
+            **opcionales,
+        }
+        obligatorios = bd.bloques_minimos_para_servicio(tipo_servicio)
+        faltantes = [bloque for bloque in obligatorios if not bloques.get(bloque)]
+        recibidos = [bloque for bloque, ok in bloques.items() if ok]
+        avisos = []
+        if especifico_proveedor:
+            avisos.append("Este expediente se tratara como analisis especifico de proveedor. No se exigira ventas ni stock.")
+        return {
+            "perfil_documental": perfil,
+            "analisis_especifico_proveedor": especifico_proveedor,
+            "bloques": bloques,
+            "bloques_recibidos": recibidos,
+            "bloques_faltantes": faltantes,
+            "bloques_obligatorios": obligatorios,
+            "bloques_opcionales": bd.BLOQUES_OPCIONALES,
+            "avisos": avisos,
+        }
 
-        return bd.tipos_recibidos_y_faltantes(str(expediente["tipo_servicio"]), documentos)
+    def _doc_satisface_compras(self, doc: Dict[str, object], perfil: str) -> bool:
+        nombre = bd.normalizar_texto(str(doc.get("nombre_original", "")))
+        extension = str(doc.get("extension", "")).lower()
+        tipo = doc.get("tipo_documental")
+        if tipo == bd.TipoDocumento.COMPRAS.value:
+            return True
+        if extension in {".xlsx", ".xls", ".csv"} and any(token in nombre for token in ("compra", "compras", "pedido", "proveedor")):
+            return True
+        if extension == ".zip" and any(token in nombre for token in ("compra", "compras", "bidafarma", "proveedor", "factura", "albaran")):
+            return True
+        if extension == ".pdf" and (
+            tipo in {bd.TipoDocumento.FACTURAS.value, bd.TipoDocumento.ALBARANES.value, bd.TipoDocumento.LIQUIDACIONES.value, bd.TipoDocumento.OTROS.value}
+        ):
+            if perfil == bd.PerfilDocumental.BIDAFARMA.value and any(
+                token in nombre for token in ("bidafarma", "vida", "pharma", "goteo", "transfer", "bitransfer", "factura", "albaran")
+            ):
+                return True
+            return any(token in nombre for token in ("factura", "compras", "proveedor", "distribuidor", "albaran"))
+        return False
+
+    def _doc_satisface_ventas(self, doc: Dict[str, object]) -> bool:
+        nombre = bd.normalizar_texto(str(doc.get("nombre_original", "")))
+        extension = str(doc.get("extension", "")).lower()
+        return extension in {".xlsx", ".xls", ".csv"} and (
+            doc.get("tipo_documental") == bd.TipoDocumento.VENTAS.value or "venta" in nombre or "ticket" in nombre
+        )
+
+    def _doc_satisface_stock(self, doc: Dict[str, object]) -> bool:
+        nombre = bd.normalizar_texto(str(doc.get("nombre_original", "")))
+        extension = str(doc.get("extension", "")).lower()
+        return extension in {".xlsx", ".xls", ".csv"} and (
+            doc.get("tipo_documental") == bd.TipoDocumento.STOCK.value
+            or any(token in nombre for token in ("stock", "inventario", "existencias"))
+        )
 
     def marcar_listo_para_analisis(self, expediente_id: str, usuario: str = "usuario") -> Tuple[bool, List[str]]:
         ok, motivos = self.validar_listo_para_analisis(expediente_id)

@@ -127,8 +127,6 @@ def ejecutar_preanalisis_expediente(
     expediente = repo.get_expediente(expediente_id)
     if not expediente:
         raise ValueError(f"Expediente no encontrado: {expediente_id}")
-    if expediente["estado"] != bd.EstadoExpediente.LISTO_ANALISIS.value:
-        raise ValueError("Solo se permite preanalisis si el expediente esta Listo para analisis.")
 
     documentos = [
         doc for doc in repo.list_documentos(expediente_id, include_deleted=False)
@@ -139,7 +137,7 @@ def ejecutar_preanalisis_expediente(
         perfil = _detectar_perfil_expediente(documentos)
         repo.update_expediente_fields(expediente_id, perfil_documental=perfil)
     resultados = [_preanalizar_documento(expediente_id, doc, perfil) for doc in documentos]
-    faltantes_perfil, warnings_perfil, errores_perfil = _evaluar_perfil_documental(perfil, resultados)
+    faltantes_perfil, warnings_perfil, errores_perfil = _evaluar_perfil_documental(perfil, resultados, expediente)
     warnings_globales = _warnings_globales(resultados) + warnings_perfil
     errores_globales = []
     if not documentos:
@@ -295,6 +293,11 @@ def _analizar_zip(path: Path, resultado: ResultadoPreanalisisDocumento) -> None:
         if corrupto:
             resultado.errores_detectados.append(f"ZIP corrupto en archivo interno: {corrupto}")
         resultado.zip_archivos_internos = [name for name in zf.namelist() if not name.endswith("/")]
+        evidencia_interna = " ".join(resultado.zip_archivos_internos)
+        for name in resultado.zip_archivos_internos:
+            suf = Path(name).suffix.lower()
+            if suf in {".xlsx", ".xls", ".csv", ".pdf"}:
+                resultado.warnings.append(f"ZIP contiene documento interno procesable: {name}")
     if not resultado.zip_archivos_internos:
         resultado.warnings.append("ZIP sin archivos internos utiles.")
     nombres = [Path(name).name.lower() for name in resultado.zip_archivos_internos]
@@ -366,28 +369,30 @@ def _detectar_perfil_expediente(documentos: List[Dict[str, object]]) -> str:
 def _evaluar_perfil_documental(
     perfil: str,
     resultados: List[ResultadoPreanalisisDocumento],
+    expediente: Dict[str, object],
 ) -> Tuple[List[str], List[str], List[str]]:
     faltantes: List[str] = []
     warnings: List[str] = []
     errores: List[str] = []
 
     if perfil == bd.PerfilDocumental.BIDAFARMA.value:
-        tiene_ventas = any(
-            doc.extension in {".xlsx", ".xls", ".csv"}
-            and doc.tipo_documental_detectado == bd.TipoDocumento.VENTAS.value
-            and not doc.errores_detectados
-            for doc in resultados
-        )
+        tiene_ventas = _bloque_ventas_ok(resultados)
+        tiene_stock = _bloque_stock_ok(resultados)
         pdfs_bidafarma = [
             doc for doc in resultados
             if doc.extension == ".pdf" and doc.proveedor_detectado == "Bidafarma" and not doc.errores_detectados
         ]
-        tiene_factura = any(doc.contiene_factura for doc in pdfs_bidafarma)
+        tiene_compras = any(doc.contiene_factura for doc in pdfs_bidafarma) or _bloque_compras_ok(resultados)
         tiene_albaranes_embebidos = any(doc.contiene_albaranes for doc in pdfs_bidafarma)
+        especifico = bd.es_analisis_especifico_proveedor(str(expediente.get("tipo_servicio", "")))
         if not tiene_ventas:
-            faltantes.append("Ventas Excel/CSV")
-        if not tiene_factura:
-            faltantes.append("PDF Bidafarma con factura")
+            if not especifico:
+                faltantes.append(bd.BloqueDocumental.VENTAS.value)
+        if not tiene_stock:
+            if not especifico:
+                faltantes.append(bd.BloqueDocumental.STOCK.value)
+        if not tiene_compras:
+            faltantes.append(bd.BloqueDocumental.COMPRAS_PROVEEDOR.value)
         if not tiene_albaranes_embebidos:
             warnings.append(
                 "El PDF parece factura Bidafarma, pero no se han detectado albaranes embebidos. Revisar manualmente."
@@ -403,7 +408,64 @@ def _evaluar_perfil_documental(
                 warnings.append(f"{doc.nombre_archivo}: PDF de laboratorio sin texto extraible; no bloquea en esta fase.")
         return faltantes, warnings, errores
 
+    especifico = bd.es_analisis_especifico_proveedor(str(expediente.get("tipo_servicio", "")))
+    tiene_compras = _bloque_compras_ok(resultados)
+    tiene_ventas = _bloque_ventas_ok(resultados)
+    tiene_stock = _bloque_stock_ok(resultados)
+    if not tiene_compras:
+        faltantes.append(bd.BloqueDocumental.COMPRAS_PROVEEDOR.value)
+    if not especifico and not tiene_ventas:
+        faltantes.append(bd.BloqueDocumental.VENTAS.value)
+    if not especifico and not tiene_stock:
+        faltantes.append(bd.BloqueDocumental.STOCK.value)
+    if especifico:
+        warnings.append("Este expediente se tratara como analisis especifico de proveedor. No se exigira ventas ni stock.")
     return faltantes, warnings, errores
+
+
+def _bloque_compras_ok(resultados: List[ResultadoPreanalisisDocumento]) -> bool:
+    return any(
+        (
+            doc.tipo_documental_detectado in {bd.TipoDocumento.COMPRAS.value, bd.TipoDocumento.FACTURAS.value, bd.TipoDocumento.ALBARANES.value}
+            or (
+                doc.extension == ".zip"
+                and any(token in bd.normalizar_texto(" ".join(doc.zip_archivos_internos)) for token in ("compra", "compras", "factura", "bidafarma", "albaran"))
+            )
+        )
+        and not doc.errores_detectados
+        for doc in resultados
+    )
+
+
+def _bloque_ventas_ok(resultados: List[ResultadoPreanalisisDocumento]) -> bool:
+    return any(
+        doc.extension in {".xlsx", ".xls", ".csv"}
+        and (
+            doc.tipo_documental_detectado == bd.TipoDocumento.VENTAS.value
+            or _columnas_contienen(doc, ("venta", "ticket", "pvp", "precio venta", "importe"))
+        )
+        and not doc.errores_detectados
+        for doc in resultados
+    )
+
+
+def _bloque_stock_ok(resultados: List[ResultadoPreanalisisDocumento]) -> bool:
+    return any(
+        doc.extension in {".xlsx", ".xls", ".csv"}
+        and (
+            doc.tipo_documental_detectado == bd.TipoDocumento.STOCK.value
+            or _columnas_contienen(doc, ("stock", "inventario", "existencias", "unidades stock"))
+        )
+        and not doc.errores_detectados
+        for doc in resultados
+    )
+
+
+def _columnas_contienen(doc: ResultadoPreanalisisDocumento, tokens: Tuple[str, ...]) -> bool:
+    texto = bd.normalizar_texto(" ".join(doc.columnas_detectadas))
+    return any(token in texto for token in tokens)
+
+
 
 
 def _analizar_pdf_bidafarma(resultado: ResultadoPreanalisisDocumento, texto: str) -> None:

@@ -75,6 +75,10 @@ def main() -> None:
                     )
                 ),
             ),
+            (
+                "stock_periodo.xlsx",
+                _xlsx_bytes(pd.DataFrame({"codigo nacional": ["123456"], "producto": ["Producto"], "unidades stock": [5], "pvp": [10.2]})),
+            ),
             ("bidafarma_factura_primera_decena.pdf", _pdf_bidafarma("D1")),
             ("bidafarma_factura_segunda_decena.pdf", _pdf_bidafarma("D2")),
             ("bidafarma_factura_tercera_decena.pdf", _pdf_bidafarma("D3")),
@@ -107,6 +111,7 @@ def main() -> None:
         expediente_sin_albaranes,
         [
             ("ventas_farmacia_3T.xlsx", _xlsx_bytes(pd.DataFrame({"fecha": ["2026-07-01"], "codigo nacional": ["1"], "importe": [1]}))),
+            ("stock_3T.xlsx", _xlsx_bytes(pd.DataFrame({"codigo nacional": ["1"], "unidades stock": [1], "pvp": [1]}))),
             ("bidafarma_factura_resumen.pdf", _pdf_bidafarma("D1", con_albaranes=False)),
         ],
     )

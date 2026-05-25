@@ -3620,8 +3620,9 @@ def render_bandeja_documental():
         d1.markdown(_bd_estado_badge(exp["estado"]), unsafe_allow_html=True)
         d1.write(f"**Farmacia:** {exp['farmacia']}  \n**Cliente:** {exp['cliente']}  \n**Email:** {exp.get('email_remitente', '')}")
         d2.write(f"**Servicio:** {exp['tipo_servicio']}  \n**Periodo:** {exp['periodo']}  \n**Ano:** {exp['ano']}")
-        d3.write("**Checklist obligatorio**")
-        d3.write(", ".join(bandeja_documental.checklist_para_servicio(exp["tipo_servicio"])) or "Sin checklist")
+        d3.write("**Bloques mínimos para análisis**")
+        evaluacion_bloques = service.evaluar_bloques_documentales(expediente_id)
+        d3.write(", ".join(evaluacion_bloques["bloques_obligatorios"]) or "Sin bloques")
         perfiles = [perfil.value for perfil in bandeja_documental.PerfilDocumental]
         perfil_actual = str(exp.get("perfil_documental", bandeja_documental.PerfilDocumental.GENERICO.value))
         perfil_sel = st.selectbox(
@@ -3636,11 +3637,26 @@ def render_bandeja_documental():
             service.recalcular_checklist_y_estado(expediente_id)
             st.rerun()
 
-        faltantes = exp.get("documentos_faltantes", [])
+        if evaluacion_bloques["avisos"]:
+            st.info(" | ".join(evaluacion_bloques["avisos"]))
+        st.write("**Estado de bloques funcionales**")
+        bcols = st.columns(3)
+        for idx, bloque in enumerate([
+            bandeja_documental.BloqueDocumental.COMPRAS_PROVEEDOR.value,
+            bandeja_documental.BloqueDocumental.VENTAS.value,
+            bandeja_documental.BloqueDocumental.STOCK.value,
+        ]):
+            completo = bool(evaluacion_bloques["bloques"].get(bloque))
+            bcols[idx].metric(bloque.replace("_", " ").title(), "Completo" if completo else "Incompleto")
+        st.caption(
+            "Opcionales/detectables dentro de compras: albaranes embebidos, liquidaciones/abonos, facturas laboratorio y otros."
+        )
+
+        faltantes = evaluacion_bloques.get("bloques_faltantes", [])
         if faltantes:
-            st.warning("Documentos faltantes: " + ", ".join(faltantes))
+            st.warning("Bloques mínimos faltantes: " + ", ".join(faltantes))
         else:
-            st.success("Checklist obligatorio completo.")
+            st.success("Bloques mínimos completos.")
 
         a1, a2, a3 = st.columns(3)
         if a1.button("Recalcular checklist"):
@@ -3727,7 +3743,7 @@ def render_bandeja_documental():
         st.subheader("Preanalisis documental automatico")
         pre_exp = repo.get_preanalisis_expediente(expediente_id)
         p1, p2, p3, p4 = st.columns([1, 1, 1, 2])
-        disabled_pre = exp["estado"] != bandeja_documental.EstadoExpediente.LISTO_ANALISIS.value
+        disabled_pre = not any(doc.get("estado_documento") == bandeja_documental.EstadoDocumento.RECIBIDO.value for doc in docs)
         if p1.button("Ejecutar preanalisis", disabled=disabled_pre):
             with st.spinner("Comprendiendo estructura documental..."):
                 try:
@@ -3738,7 +3754,7 @@ def render_bandeja_documental():
                 except Exception as error:
                     st.error(str(error))
         if disabled_pre:
-            p4.info("Marca el expediente como Listo para analisis antes de ejecutar el preanalisis.")
+            p4.info("Carga al menos un documento recibido para ejecutar el preanalisis.")
         if pre_exp:
             p2.metric("Docs OK", pre_exp["documentos_ok"])
             p3.metric("Warnings", pre_exp["documentos_warning"])

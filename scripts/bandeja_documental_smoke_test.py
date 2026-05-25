@@ -25,6 +25,7 @@ def main() -> None:
             ("factura_laboratorio.pdf", b"factura"),
             ("albaran_1.pdf", b"albaran"),
             ("liquidacion.pdf", b"liquidacion"),
+            ("stock_periodo.xlsx", b"stock"),
         ],
     )
     duplicado = service.registrar_subida_manual(expediente_id, [("compras_copia.xlsx", b"compras")])
