@@ -170,6 +170,17 @@ class BandejaDocumentalRepository:
                     subtipo_bidafarma TEXT NOT NULL DEFAULT ''
                 );
 
+                CREATE TABLE IF NOT EXISTS expediente_bloques (
+                    expediente_id TEXT NOT NULL,
+                    bloque TEXT NOT NULL,
+                    completo INTEGER NOT NULL DEFAULT 0,
+                    razon_bloque_completo TEXT NOT NULL DEFAULT '',
+                    fuente_validacion_bloque TEXT NOT NULL DEFAULT '',
+                    confianza_bloque REAL NOT NULL DEFAULT 0,
+                    fecha_actualizacion TEXT NOT NULL,
+                    PRIMARY KEY (expediente_id, bloque)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_expedientes_estado ON expedientes(estado);
                 CREATE INDEX IF NOT EXISTS idx_expedientes_farmacia ON expedientes(farmacia);
                 CREATE INDEX IF NOT EXISTS idx_documentos_expediente ON documentos(expediente_id);
@@ -180,6 +191,7 @@ class BandejaDocumentalRepository:
                 CREATE INDEX IF NOT EXISTS idx_preanalisis_doc_expediente ON preanalisis_documento(expediente_id);
                 CREATE INDEX IF NOT EXISTS idx_preanalisis_doc_proveedor ON preanalisis_documento(proveedor_detectado);
                 CREATE INDEX IF NOT EXISTS idx_preanalisis_doc_tipo ON preanalisis_documento(tipo_documental_detectado);
+                CREATE INDEX IF NOT EXISTS idx_expediente_bloques_exp ON expediente_bloques(expediente_id);
                 """
             )
             self._ensure_column(conn, "documentos", "fecha_eliminacion", "TEXT NOT NULL DEFAULT ''")
@@ -605,6 +617,46 @@ class BandejaDocumentalRepository:
                     data.get("subtipo_bidafarma", ""),
                 ),
             )
+
+    def replace_bloques_expediente(self, expediente_id: str, bloques: Dict[str, Dict[str, object]]) -> None:
+        ahora = bd.ahora_iso()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM expediente_bloques WHERE expediente_id=?", (expediente_id,))
+            for bloque, detalle in bloques.items():
+                conn.execute(
+                    """
+                    INSERT INTO expediente_bloques (
+                        expediente_id, bloque, completo, razon_bloque_completo,
+                        fuente_validacion_bloque, confianza_bloque, fecha_actualizacion
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        expediente_id,
+                        bloque,
+                        1 if detalle.get("completo") else 0,
+                        detalle.get("razon", ""),
+                        detalle.get("fuente", ""),
+                        float(detalle.get("confianza", 0) or 0),
+                        ahora,
+                    ),
+                )
+
+    def list_bloques_expediente(self, expediente_id: str) -> List[Dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM expediente_bloques
+                WHERE expediente_id=?
+                ORDER BY bloque
+                """,
+                (expediente_id,),
+            ).fetchall()
+        out = []
+        for row in rows:
+            data = dict(row)
+            data["completo"] = bool(data["completo"])
+            out.append(data)
+        return out
 
     def get_preanalisis_expediente(self, expediente_id: str) -> Optional[Dict[str, object]]:
         with self._connect() as conn:

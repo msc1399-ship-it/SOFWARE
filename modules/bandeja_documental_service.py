@@ -237,6 +237,7 @@ class BandejaDocumentalService:
             documentos_recibidos=recibidos,
             documentos_faltantes=faltantes,
         )
+        self.repo.replace_bloques_expediente(expediente_id, evaluacion.get("bloques_detalle", {}))
         self.repo.add_evento(expediente_id, "checklist_recalculado", f"Estado: {estado}. Faltantes: {', '.join(faltantes) or 'ninguno'}", usuario)
         logger.info("documental.checklist_recalculado", extra={"expediente_id": expediente_id, "estado": estado})
         return estado
@@ -289,6 +290,7 @@ class BandejaDocumentalService:
             doc for doc in documentos
             if doc.get("estado_documento") == bd.EstadoDocumento.RECIBIDO.value
         ]
+        preanalisis_docs = self._preanalisis_activo(expediente.get("expediente_id"), activos)
         if tipo_servicio != "ASESORIA" and not especifico_proveedor and perfil != bd.PerfilDocumental.LABORATORIOS.value:
             recibidos, faltantes = bd.tipos_recibidos_y_faltantes(tipo_servicio, documentos)
             return {
@@ -300,10 +302,23 @@ class BandejaDocumentalService:
                 "bloques_obligatorios": bd.checklist_para_servicio(tipo_servicio),
                 "bloques_opcionales": bd.BLOQUES_OPCIONALES,
                 "avisos": [],
+                "bloques_detalle": {
+                    tipo: self._detalle_bloque(tipo in recibidos, "Checklist documental generico.", "documentos", 0.5)
+                    for tipo in bd.checklist_para_servicio(tipo_servicio)
+                },
             }
-        tiene_compras = any(self._doc_satisface_compras(doc, perfil) for doc in activos)
-        tiene_ventas = any(self._doc_satisface_ventas(doc) for doc in activos)
-        tiene_stock = any(self._doc_satisface_stock(doc) for doc in activos)
+        compra_pre = self._bloque_compras_desde_preanalisis(preanalisis_docs)
+        ventas_pre = self._bloque_tabular_desde_preanalisis(preanalisis_docs, bd.TipoDocumento.VENTAS.value)
+        stock_pre = self._bloque_tabular_desde_preanalisis(preanalisis_docs, bd.TipoDocumento.STOCK.value)
+        compra_fallback = self._primer_detalle_documento(activos, lambda doc: self._doc_satisface_compras(doc, perfil), "Documento de compras detectado antes de preanalisis.")
+        ventas_fallback = self._primer_detalle_documento(activos, self._doc_satisface_ventas, "Documento de ventas detectado antes de preanalisis.")
+        stock_fallback = self._primer_detalle_documento(activos, self._doc_satisface_stock, "Documento de stock detectado antes de preanalisis.")
+        compra_detalle = compra_pre if compra_pre["completo"] else compra_fallback
+        ventas_detalle = ventas_pre if ventas_pre["completo"] else ventas_fallback
+        stock_detalle = stock_pre if stock_pre["completo"] else stock_fallback
+        tiene_compras = bool(compra_detalle["completo"])
+        tiene_ventas = bool(ventas_detalle["completo"])
+        tiene_stock = bool(stock_detalle["completo"])
         if perfil == bd.PerfilDocumental.LABORATORIOS.value:
             tiene_pdf = any(str(doc.get("extension", "")).lower() == ".pdf" for doc in activos)
             return {
@@ -315,6 +330,14 @@ class BandejaDocumentalService:
                 "bloques_obligatorios": [bd.BloqueDocumental.FACTURAS_LABORATORIO.value],
                 "bloques_opcionales": [bd.BloqueDocumental.OTROS.value],
                 "avisos": ["Perfil laboratorio: PDFs aceptados aunque sean escaneados; no bloquea OCR en esta fase."],
+                "bloques_detalle": {
+                    bd.BloqueDocumental.FACTURAS_LABORATORIO.value: self._detalle_bloque(
+                        tiene_pdf,
+                        "PDF de laboratorio recibido." if tiene_pdf else "",
+                        "documentos",
+                        0.5 if tiene_pdf else 0,
+                    )
+                },
             }
         opcionales = {
             bd.BloqueDocumental.ALBARANES_SEPARADOS.value: any(
@@ -333,6 +356,29 @@ class BandejaDocumentalService:
             bd.BloqueDocumental.STOCK.value: tiene_stock,
             **opcionales,
         }
+        bloques_detalle = {
+            bd.BloqueDocumental.COMPRAS_PROVEEDOR.value: compra_detalle,
+            bd.BloqueDocumental.VENTAS.value: ventas_detalle,
+            bd.BloqueDocumental.STOCK.value: stock_detalle,
+            bd.BloqueDocumental.ALBARANES_SEPARADOS.value: self._detalle_bloque(
+                bool(opcionales[bd.BloqueDocumental.ALBARANES_SEPARADOS.value]),
+                "Albaranes separados recibidos.",
+                "documentos",
+                0.5,
+            ),
+            bd.BloqueDocumental.LIQUIDACIONES_SEPARADAS.value: self._detalle_bloque(
+                bool(opcionales[bd.BloqueDocumental.LIQUIDACIONES_SEPARADAS.value]),
+                "Liquidaciones/abonos separados recibidos.",
+                "documentos",
+                0.5,
+            ),
+            bd.BloqueDocumental.FACTURAS_LABORATORIO.value: self._detalle_bloque(
+                bool(opcionales[bd.BloqueDocumental.FACTURAS_LABORATORIO.value]),
+                "Factura de laboratorio detectada.",
+                "documentos",
+                0.5,
+            ),
+        }
         obligatorios = bd.bloques_minimos_para_servicio(tipo_servicio)
         faltantes = [bloque for bloque in obligatorios if not bloques.get(bloque)]
         recibidos = [bloque for bloque, ok in bloques.items() if ok]
@@ -348,7 +394,97 @@ class BandejaDocumentalService:
             "bloques_obligatorios": obligatorios,
             "bloques_opcionales": bd.BLOQUES_OPCIONALES,
             "avisos": avisos,
+            "bloques_detalle": bloques_detalle,
         }
+
+    def _preanalisis_activo(self, expediente_id: object, activos: List[Dict[str, object]]) -> List[Dict[str, object]]:
+        if not expediente_id:
+            return []
+        ids_activos = {str(doc.get("id_documento")) for doc in activos}
+        return [
+            doc for doc in self.repo.list_preanalisis_documentos(str(expediente_id))
+            if str(doc.get("documento_id")) in ids_activos
+        ]
+
+    def _detalle_bloque(self, completo: bool, razon: str, fuente: str, confianza: float) -> Dict[str, object]:
+        return {
+            "completo": bool(completo),
+            "razon": razon if completo else "",
+            "fuente": fuente if completo else "",
+            "confianza": float(confianza if completo else 0),
+        }
+
+    def _primer_detalle_documento(self, documentos: List[Dict[str, object]], predicate, razon: str) -> Dict[str, object]:
+        for doc in documentos:
+            if predicate(doc):
+                return self._detalle_bloque(True, f"{razon} Fuente: {doc.get('nombre_original', '')}", "documentos", 0.45)
+        return self._detalle_bloque(False, "", "", 0)
+
+    def _bloque_compras_desde_preanalisis(self, docs: List[Dict[str, object]]) -> Dict[str, object]:
+        for doc in docs:
+            if doc.get("errores_detectados"):
+                continue
+            proveedor = bd.normalizar_texto(str(doc.get("proveedor_detectado", "")))
+            tipo = str(doc.get("tipo_documental_detectado", ""))
+            pdf_compuesto = bool(doc.get("pdf_compuesto"))
+            contiene_factura = bool(doc.get("contiene_factura"))
+            if proveedor in {"bidafarma", "vida pharma"} and contiene_factura:
+                return self._detalle_bloque(
+                    True,
+                    f"Bloque satisfecho mediante PDF Bidafarma compuesto detectado: {doc.get('nombre_archivo', '')}.",
+                    "preanalisis",
+                    max(float(doc.get("confianza_proveedor", 0) or 0), 0.9),
+                )
+            if tipo in {bd.TipoDocumento.COMPRAS.value, bd.TipoDocumento.FACTURAS.value, bd.TipoDocumento.ALBARANES.value}:
+                return self._detalle_bloque(
+                    True,
+                    f"Bloque satisfecho por tipo documental detectado ({tipo}): {doc.get('nombre_archivo', '')}.",
+                    "preanalisis",
+                    float(doc.get("confianza_tipo", 0) or 0.5),
+                )
+            if pdf_compuesto and contiene_factura:
+                return self._detalle_bloque(
+                    True,
+                    f"Bloque satisfecho mediante PDF compuesto valido: {doc.get('nombre_archivo', '')}.",
+                    "preanalisis",
+                    max(float(doc.get("confianza_tipo", 0) or 0), 0.7),
+                )
+            if str(doc.get("extension", "")).lower() == ".zip" and any(
+                token in bd.normalizar_texto(" ".join(doc.get("zip_archivos_internos", [])))
+                for token in ("compra", "compras", "factura", "bidafarma", "albaran")
+            ):
+                return self._detalle_bloque(
+                    True,
+                    f"Bloque satisfecho por ZIP con documentación de compras: {doc.get('nombre_archivo', '')}.",
+                    "preanalisis",
+                    0.6,
+                )
+        return self._detalle_bloque(False, "", "", 0)
+
+    def _bloque_tabular_desde_preanalisis(self, docs: List[Dict[str, object]], tipo_esperado: str) -> Dict[str, object]:
+        for doc in docs:
+            extension = str(doc.get("extension", "")).lower()
+            if extension not in {".xlsx", ".xls", ".csv"} or doc.get("errores_detectados"):
+                continue
+            tipo_detectado = str(doc.get("tipo_documental_detectado", ""))
+            confianza = float(doc.get("confianza_tipo", 0) or 0)
+            columnas = bd.normalizar_texto(" ".join(doc.get("columnas_detectadas", [])))
+            if tipo_esperado == bd.TipoDocumento.VENTAS.value:
+                estructura_score = sum(1 for token in ("fecha", "venta", "ticket", "pvp", "precio venta", "importe", "unidades") if token in columnas)
+                estructura_ok = estructura_score >= 3
+                bloque = bd.BloqueDocumental.VENTAS.value
+            else:
+                estructura_score = sum(1 for token in ("stock", "inventario", "existencias", "unidades stock", "coste medio", "pvp") if token in columnas)
+                estructura_ok = estructura_score >= 2
+                bloque = bd.BloqueDocumental.STOCK.value
+            if estructura_ok and (tipo_detectado == tipo_esperado or confianza >= 0.45):
+                return self._detalle_bloque(
+                    True,
+                    f"{bloque} validado por estructura tabular detectada: {doc.get('nombre_archivo', '')}.",
+                    "preanalisis",
+                    max(confianza, min(0.95, 0.35 + estructura_score * 0.1)),
+                )
+        return self._detalle_bloque(False, "", "", 0)
 
     def _doc_satisface_compras(self, doc: Dict[str, object], perfil: str) -> bool:
         nombre = bd.normalizar_texto(str(doc.get("nombre_original", "")))

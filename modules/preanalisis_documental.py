@@ -186,6 +186,12 @@ def ejecutar_preanalisis_expediente(
     for doc in resultados:
         repo.save_preanalisis_documento(doc.to_dict(), resultado.fecha_ejecucion, estado)
     repo.add_evento(expediente_id, "preanalisis_documental", f"Estado: {estado}", "preanalisis")
+    try:
+        from modules.bandeja_documental_service import BandejaDocumentalService
+
+        BandejaDocumentalService(repo=repo).recalcular_checklist_y_estado(expediente_id, usuario="preanalisis")
+    except Exception as exc:
+        repo.add_evento(expediente_id, "preanalisis_recalculo_bloques_error", str(exc), "preanalisis")
     return resultado
 
 

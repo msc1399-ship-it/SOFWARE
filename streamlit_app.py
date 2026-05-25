@@ -3647,7 +3647,17 @@ def render_bandeja_documental():
             bandeja_documental.BloqueDocumental.STOCK.value,
         ]):
             completo = bool(evaluacion_bloques["bloques"].get(bloque))
-            bcols[idx].metric(bloque.replace("_", " ").title(), "Completo" if completo else "Incompleto")
+            detalle_bloque = evaluacion_bloques.get("bloques_detalle", {}).get(bloque, {})
+            bcols[idx].metric(
+                bloque.replace("_", " ").title(),
+                "Completo" if completo else "Incompleto",
+                help=str(detalle_bloque.get("razon") or "Pendiente de validacion documental."),
+            )
+            if completo and detalle_bloque.get("razon"):
+                confianza = float(detalle_bloque.get("confianza", 0) or 0)
+                bcols[idx].caption(
+                    f"{detalle_bloque.get('fuente', 'validacion')} · confianza {confianza:.0%}"
+                )
         st.caption(
             "Opcionales/detectables dentro de compras: albaranes embebidos, liquidaciones/abonos, facturas laboratorio y otros."
         )
