@@ -3622,6 +3622,19 @@ def render_bandeja_documental():
         d2.write(f"**Servicio:** {exp['tipo_servicio']}  \n**Periodo:** {exp['periodo']}  \n**Ano:** {exp['ano']}")
         d3.write("**Checklist obligatorio**")
         d3.write(", ".join(bandeja_documental.checklist_para_servicio(exp["tipo_servicio"])) or "Sin checklist")
+        perfiles = [perfil.value for perfil in bandeja_documental.PerfilDocumental]
+        perfil_actual = str(exp.get("perfil_documental", bandeja_documental.PerfilDocumental.GENERICO.value))
+        perfil_sel = st.selectbox(
+            "Perfil documental",
+            perfiles,
+            index=perfiles.index(perfil_actual) if perfil_actual in perfiles else perfiles.index(bandeja_documental.PerfilDocumental.GENERICO.value),
+            help="Ajusta el checklist y el preanalisis sin modificar el flujo manual de calculo.",
+        )
+        if perfil_sel != perfil_actual:
+            repo.update_expediente_fields(expediente_id, perfil_documental=perfil_sel)
+            repo.add_evento(expediente_id, "perfil_documental_actualizado", f"{perfil_actual} -> {perfil_sel}", "usuario")
+            service.recalcular_checklist_y_estado(expediente_id)
+            st.rerun()
 
         faltantes = exp.get("documentos_faltantes", [])
         if faltantes:
@@ -3730,7 +3743,9 @@ def render_bandeja_documental():
             p2.metric("Docs OK", pre_exp["documentos_ok"])
             p3.metric("Warnings", pre_exp["documentos_warning"])
             p4.markdown(_preanalisis_badge(pre_exp["estado_preanalisis"], pre_exp["valido_global"]), unsafe_allow_html=True)
-            st.caption(f"Ultima ejecucion: {pre_exp['fecha_ejecucion']}")
+            st.caption(f"Ultima ejecucion: {pre_exp['fecha_ejecucion']} | Perfil: {pre_exp.get('perfil_documental', 'GENERICO')}")
+            if pre_exp.get("documentos_faltantes_perfil"):
+                st.warning("Faltantes segun perfil: " + ", ".join(pre_exp["documentos_faltantes_perfil"]))
             if pre_exp["warnings_globales"]:
                 st.warning("Warnings globales: " + " | ".join(pre_exp["warnings_globales"]))
             if pre_exp["errores_globales"]:
@@ -3747,6 +3762,15 @@ def render_bandeja_documental():
                             "Confianza tipo": round(float(item["confianza_tipo"]), 2),
                             "Proveedor": item["proveedor_detectado"],
                             "Confianza proveedor": round(float(item["confianza_proveedor"]), 2),
+                            "Subtipo": item.get("subtipo_documental", ""),
+                            "PDF compuesto": bool(item.get("pdf_compuesto")),
+                            "Factura": bool(item.get("contiene_factura")),
+                            "Albaranes": bool(item.get("contiene_albaranes")),
+                            "Paginas factura": item.get("paginas_factura", []),
+                            "Paginas albaranes": item.get("paginas_albaranes", []),
+                            "N factura": item.get("numero_factura", ""),
+                            "Fechas": " | ".join(item.get("fechas_detectadas", [])),
+                            "Liquidaciones": " | ".join(item.get("posibles_liquidaciones_detectadas", [])),
                             "Formato": item["formato_detectado"],
                             "Columnas": len(item["columnas_detectadas"]),
                             "Filas": item["numero_filas"],

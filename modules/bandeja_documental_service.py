@@ -114,7 +114,9 @@ class BandejaDocumentalService:
 
             tipo = bd.clasificar_documento(nombre_original)
             reemplaza = ""
-            anterior = self.repo.get_documento_activo_por_tipo(expediente_id, tipo)
+            perfil = str(expediente.get("perfil_documental", bd.PerfilDocumental.GENERICO.value))
+            permite_multiples = perfil == bd.PerfilDocumental.BIDAFARMA.value or extension == ".pdf"
+            anterior = None if permite_multiples else self.repo.get_documento_activo_por_tipo(expediente_id, tipo)
             if anterior:
                 reemplaza = str(anterior["id_documento"])
                 self.repo.update_documento_estado(
@@ -179,7 +181,7 @@ class BandejaDocumentalService:
         if not expediente:
             raise ValueError(f"Expediente no encontrado: {expediente_id}")
         documentos = self.repo.list_documentos(expediente_id, include_deleted=False)
-        recibidos, faltantes = bd.tipos_recibidos_y_faltantes(str(expediente["tipo_servicio"]), documentos)
+        recibidos, faltantes = self._recibidos_faltantes_por_perfil(expediente, documentos)
         incorrectos = [
             doc for doc in documentos
             if doc.get("estado_documento") == bd.EstadoDocumento.INCORRECTO.value
@@ -214,7 +216,7 @@ class BandejaDocumentalService:
         if not expediente:
             return False, ["Expediente no encontrado"]
         documentos = self.repo.list_documentos(expediente_id, include_deleted=False)
-        _, faltantes = bd.tipos_recibidos_y_faltantes(str(expediente["tipo_servicio"]), documentos)
+        _, faltantes = self._recibidos_faltantes_por_perfil(expediente, documentos)
         motivos = []
         if faltantes:
             motivos.append("Faltan documentos obligatorios: " + ", ".join(faltantes))
@@ -228,6 +230,59 @@ class BandejaDocumentalService:
         if incorrectos:
             motivos.append("Hay documentos incorrectos activos: " + ", ".join(incorrectos))
         return not motivos, motivos
+
+    def _recibidos_faltantes_por_perfil(
+        self,
+        expediente: Dict[str, object],
+        documentos: List[Dict[str, object]],
+    ) -> Tuple[List[str], List[str]]:
+        perfil = str(expediente.get("perfil_documental", bd.PerfilDocumental.GENERICO.value))
+        activos = [
+            doc for doc in documentos
+            if doc.get("estado_documento") == bd.EstadoDocumento.RECIBIDO.value
+        ]
+        if perfil == bd.PerfilDocumental.BIDAFARMA.value:
+            tiene_ventas = any(
+                doc.get("extension") in {".xlsx", ".xls", ".csv"}
+                and (
+                    doc.get("tipo_documental") == bd.TipoDocumento.VENTAS.value
+                    or "venta" in bd.normalizar_texto(str(doc.get("nombre_original", "")))
+                )
+                for doc in activos
+            )
+            tiene_pdf_bidafarma = any(
+                doc.get("extension") == ".pdf"
+                and (
+                    doc.get("tipo_documental") in {
+                        bd.TipoDocumento.FACTURAS.value,
+                        bd.TipoDocumento.ALBARANES.value,
+                        bd.TipoDocumento.LIQUIDACIONES.value,
+                        bd.TipoDocumento.OTROS.value,
+                    }
+                )
+                and any(
+                    token in bd.normalizar_texto(str(doc.get("nombre_original", "")))
+                    for token in ("bidafarma", "vida", "pharma", "goteo", "transfer", "bitransfer", "factura", "albaran")
+                )
+                for doc in activos
+            )
+            recibidos = []
+            faltantes = []
+            if tiene_ventas:
+                recibidos.append("Ventas Excel")
+            else:
+                faltantes.append("Ventas Excel")
+            if tiene_pdf_bidafarma:
+                recibidos.append("PDF Bidafarma con factura/albaranes embebidos")
+            else:
+                faltantes.append("PDF Bidafarma compuesto")
+            return recibidos, faltantes
+
+        if perfil == bd.PerfilDocumental.LABORATORIOS.value:
+            tiene_pdf = any(doc.get("extension") == ".pdf" for doc in activos)
+            return (["PDF facturas laboratorio"] if tiene_pdf else [], [] if tiene_pdf else ["PDF facturas laboratorio"])
+
+        return bd.tipos_recibidos_y_faltantes(str(expediente["tipo_servicio"]), documentos)
 
     def marcar_listo_para_analisis(self, expediente_id: str, usuario: str = "usuario") -> Tuple[bool, List[str]]:
         ok, motivos = self.validar_listo_para_analisis(expediente_id)

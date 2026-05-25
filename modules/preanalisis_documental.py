@@ -50,6 +50,17 @@ class ResultadoPreanalisisDocumento:
     warnings: List[str] = field(default_factory=list)
     valido_para_analisis: bool = False
     resumen: str = ""
+    perfil_documental: str = bd.PerfilDocumental.GENERICO.value
+    subtipo_documental: str = ""
+    pdf_compuesto: bool = False
+    contiene_factura: bool = False
+    contiene_albaranes: bool = False
+    paginas_factura: List[int] = field(default_factory=list)
+    paginas_albaranes: List[int] = field(default_factory=list)
+    numero_factura: str = ""
+    fechas_detectadas: List[str] = field(default_factory=list)
+    albaranes_detectados_count: int = 0
+    posibles_liquidaciones_detectadas: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -68,6 +79,8 @@ class ResultadoPreanalisisExpediente:
     errores_globales: List[str]
     valido_global: bool
     resultados_documentos: List[ResultadoPreanalisisDocumento]
+    perfil_documental: str = bd.PerfilDocumental.GENERICO.value
+    documentos_faltantes_perfil: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, object]:
         data = asdict(self)
@@ -101,6 +114,10 @@ COLUMN_HINTS = {
     bd.TipoDocumento.STOCK.value: ["stock", "inventario", "existencias", "lote", "caducidad"],
 }
 
+SUBTIPO_BIDAFARMA_NORMAL_GOTEO = "BIDAFARMA_NORMAL_GOTEO"
+SUBTIPO_BIDAFARMA_TRANSFER = "BIDAFARMA_TRANSFER"
+SUBTIPO_BIDAFARMA_OTROS = "BIDAFARMA_OTROS"
+
 
 def ejecutar_preanalisis_expediente(
     expediente_id: str,
@@ -117,11 +134,17 @@ def ejecutar_preanalisis_expediente(
         doc for doc in repo.list_documentos(expediente_id, include_deleted=False)
         if doc.get("estado_documento") == bd.EstadoDocumento.RECIBIDO.value
     ]
-    resultados = [_preanalizar_documento(expediente_id, doc) for doc in documentos]
-    warnings_globales = _warnings_globales(resultados)
+    perfil = str(expediente.get("perfil_documental", bd.PerfilDocumental.GENERICO.value))
+    if perfil == bd.PerfilDocumental.GENERICO.value:
+        perfil = _detectar_perfil_expediente(documentos)
+        repo.update_expediente_fields(expediente_id, perfil_documental=perfil)
+    resultados = [_preanalizar_documento(expediente_id, doc, perfil) for doc in documentos]
+    faltantes_perfil, warnings_perfil, errores_perfil = _evaluar_perfil_documental(perfil, resultados)
+    warnings_globales = _warnings_globales(resultados) + warnings_perfil
     errores_globales = []
     if not documentos:
         errores_globales.append("El expediente no tiene documentos recibidos validos.")
+    errores_globales.extend(errores_perfil)
 
     documentos_error = sum(1 for doc in resultados if doc.errores_detectados)
     documentos_warning = sum(1 for doc in resultados if doc.warnings and not doc.errores_detectados)
@@ -148,6 +171,8 @@ def ejecutar_preanalisis_expediente(
         errores_globales=errores_globales,
         valido_global=valido_global,
         resultados_documentos=resultados,
+        perfil_documental=perfil,
+        documentos_faltantes_perfil=faltantes_perfil,
     )
     repo.save_preanalisis_expediente(resultado.to_dict())
     for doc in resultados:
@@ -156,7 +181,7 @@ def ejecutar_preanalisis_expediente(
     return resultado
 
 
-def _preanalizar_documento(expediente_id: str, doc: Dict[str, object]) -> ResultadoPreanalisisDocumento:
+def _preanalizar_documento(expediente_id: str, doc: Dict[str, object], perfil: str) -> ResultadoPreanalisisDocumento:
     resultado = ResultadoPreanalisisDocumento(
         expediente_id=expediente_id,
         documento_id=str(doc["id_documento"]),
@@ -166,6 +191,7 @@ def _preanalizar_documento(expediente_id: str, doc: Dict[str, object]) -> Result
         tamano_bytes=int(doc.get("tamano_bytes", 0) or 0),
         hash_archivo=str(doc.get("hash_archivo", "")),
         tipo_documental_esperado=str(doc.get("tipo_documental", "")),
+        perfil_documental=perfil,
     )
     path = Path(resultado.ruta_archivo)
     if not path.exists() or not path.is_file():
@@ -255,6 +281,8 @@ def _analizar_pdf(path: Path, resultado: ResultadoPreanalisisDocumento) -> None:
     resultado.hojas_detectadas = []
     resultado.warnings.extend(_warnings_pdf_texto(texto))
     resultado._texto_detectado = texto  # type: ignore[attr-defined]
+    _analizar_pdf_bidafarma(resultado, texto)
+    _analizar_pdf_laboratorio(resultado, texto)
 
 
 def _analizar_zip(path: Path, resultado: ResultadoPreanalisisDocumento) -> None:
@@ -280,8 +308,10 @@ def _detectar_tipo_y_proveedor(resultado: ResultadoPreanalisisDocumento) -> None
     scores_tipo = _score_keywords(texto, TIPO_KEYWORDS)
     if scores_tipo:
         tipo, score = max(scores_tipo.items(), key=lambda item: item[1])
-        resultado.tipo_documental_detectado = tipo
-        resultado.confianza_tipo = min(1.0, score / 6)
+        confianza = min(1.0, score / 6)
+        if confianza >= resultado.confianza_tipo:
+            resultado.tipo_documental_detectado = tipo
+            resultado.confianza_tipo = confianza
     else:
         tipo_nombre = bd.clasificar_documento(resultado.nombre_archivo)
         resultado.tipo_documental_detectado = tipo_nombre
@@ -290,11 +320,19 @@ def _detectar_tipo_y_proveedor(resultado: ResultadoPreanalisisDocumento) -> None
     scores_proveedor = _score_keywords(texto, PROVEEDOR_KEYWORDS)
     if scores_proveedor:
         proveedor, score = max(scores_proveedor.items(), key=lambda item: item[1])
-        resultado.proveedor_detectado = proveedor
-        resultado.confianza_proveedor = min(1.0, score / 3)
+        confianza = min(1.0, score / 3)
+        if confianza >= resultado.confianza_proveedor:
+            resultado.proveedor_detectado = proveedor
+            resultado.confianza_proveedor = confianza
     else:
         resultado.proveedor_detectado = "Otros"
         resultado.confianza_proveedor = 0.0
+
+    if resultado.perfil_documental == bd.PerfilDocumental.BIDAFARMA.value and resultado.proveedor_detectado == "Otros":
+        evidencia = _texto_evidencia(resultado)
+        if any(token in evidencia for token in ("vida pharma", "bidafarma", "bitransfer", "zacofarva", "zv")):
+            resultado.proveedor_detectado = "Bidafarma"
+            resultado.confianza_proveedor = max(resultado.confianza_proveedor, 0.65)
 
 
 def _texto_evidencia(resultado: ResultadoPreanalisisDocumento) -> str:
@@ -308,6 +346,154 @@ def _texto_evidencia(resultado: ResultadoPreanalisisDocumento) -> str:
     if texto_pdf:
         partes.append(str(texto_pdf))
     return bd.normalizar_texto(" ".join(partes))
+
+
+def _detectar_perfil_expediente(documentos: List[Dict[str, object]]) -> str:
+    texto = bd.normalizar_texto(" ".join(str(doc.get("nombre_original", "")) for doc in documentos))
+    if any(token in texto for token in ("bidafarma", "vida pharma", "bitransfer", "goteo", "zacofarva")):
+        return bd.PerfilDocumental.BIDAFARMA.value
+    if "cofares" in texto:
+        return bd.PerfilDocumental.COFARES.value
+    if "alliance" in texto:
+        return bd.PerfilDocumental.ALLIANCE.value
+    if "hefame" in texto:
+        return bd.PerfilDocumental.HEFAME.value
+    if "laboratorio" in texto or "laboratorios" in texto:
+        return bd.PerfilDocumental.LABORATORIOS.value
+    return bd.PerfilDocumental.GENERICO.value
+
+
+def _evaluar_perfil_documental(
+    perfil: str,
+    resultados: List[ResultadoPreanalisisDocumento],
+) -> Tuple[List[str], List[str], List[str]]:
+    faltantes: List[str] = []
+    warnings: List[str] = []
+    errores: List[str] = []
+
+    if perfil == bd.PerfilDocumental.BIDAFARMA.value:
+        tiene_ventas = any(
+            doc.extension in {".xlsx", ".xls", ".csv"}
+            and doc.tipo_documental_detectado == bd.TipoDocumento.VENTAS.value
+            and not doc.errores_detectados
+            for doc in resultados
+        )
+        pdfs_bidafarma = [
+            doc for doc in resultados
+            if doc.extension == ".pdf" and doc.proveedor_detectado == "Bidafarma" and not doc.errores_detectados
+        ]
+        tiene_factura = any(doc.contiene_factura for doc in pdfs_bidafarma)
+        tiene_albaranes_embebidos = any(doc.contiene_albaranes for doc in pdfs_bidafarma)
+        if not tiene_ventas:
+            faltantes.append("Ventas Excel/CSV")
+        if not tiene_factura:
+            faltantes.append("PDF Bidafarma con factura")
+        if not tiene_albaranes_embebidos:
+            warnings.append(
+                "El PDF parece factura Bidafarma, pero no se han detectado albaranes embebidos. Revisar manualmente."
+            )
+        return faltantes, warnings, errores
+
+    if perfil == bd.PerfilDocumental.LABORATORIOS.value:
+        pdfs = [doc for doc in resultados if doc.extension == ".pdf"]
+        if not pdfs:
+            faltantes.append("PDF facturas laboratorio")
+        for doc in pdfs:
+            if not doc.pdf_texto_extraible:
+                warnings.append(f"{doc.nombre_archivo}: PDF de laboratorio sin texto extraible; no bloquea en esta fase.")
+        return faltantes, warnings, errores
+
+    return faltantes, warnings, errores
+
+
+def _analizar_pdf_bidafarma(resultado: ResultadoPreanalisisDocumento, texto: str) -> None:
+    evidencia = bd.normalizar_texto(f"{resultado.nombre_archivo} {texto}")
+    if not any(token in evidencia for token in ("bidafarma", "vida pharma", "bitransfer", "goteo", "zacofarva", "zv")):
+        return
+
+    paginas = _paginas_texto_pdf(texto, max(1, resultado.pdf_paginas))
+    resultado.pdf_compuesto = True
+    resultado.contiene_factura = "factura" in evidencia
+    resultado.contiene_albaranes = any(token in evidencia for token in ("albaran", "albaranes", "albarán"))
+    resultado.paginas_factura = [
+        idx for idx, pagina in enumerate(paginas, start=1)
+        if "factura" in bd.normalizar_texto(pagina)
+    ]
+    resultado.paginas_albaranes = [
+        idx for idx, pagina in enumerate(paginas, start=1)
+        if any(token in bd.normalizar_texto(pagina) for token in ("albaran", "albaranes", "albarán"))
+    ]
+    if not resultado.paginas_factura and resultado.contiene_factura:
+        resultado.paginas_factura = [1]
+    if not resultado.paginas_albaranes and resultado.contiene_albaranes:
+        resultado.paginas_albaranes = [idx for idx in range(2, resultado.pdf_paginas + 1)] or [1]
+    resultado.albaranes_detectados_count = _count_distinct(
+        re.findall(r"(?:albar[aá]n|alb\.?)\s*(?:n[ºo.]*)?\s*([A-Z0-9/-]{4,})", evidencia, flags=re.I)
+    )
+    resultado.numero_factura = _first_match(
+        evidencia,
+        [
+            r"factura\s*(?:n[ºo.]*)?\s*([A-Z0-9/-]{4,})",
+            r"n[ºo.]*\s*factura\s*([A-Z0-9/-]{4,})",
+        ],
+    )
+    resultado.fechas_detectadas = _dedupe_preserve(
+        re.findall(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", evidencia)
+    )
+    resultado.posibles_liquidaciones_detectadas = _dedupe_preserve(
+        token for token in ("tipo 74", "abono", "cargo", "liquidacion", "liquidación")
+        if token in evidencia
+    )
+    if any(token in evidencia for token in ("transfer", "bitransfer")):
+        resultado.subtipo_documental = SUBTIPO_BIDAFARMA_TRANSFER
+    elif any(token in evidencia for token in ("goteo", "factura", "albaran", "albarán")):
+        resultado.subtipo_documental = SUBTIPO_BIDAFARMA_NORMAL_GOTEO
+    else:
+        resultado.subtipo_documental = SUBTIPO_BIDAFARMA_OTROS
+    if resultado.contiene_factura and resultado.contiene_albaranes:
+        resultado.tipo_documental_detectado = bd.TipoDocumento.FACTURAS.value
+        resultado.confianza_tipo = max(resultado.confianza_tipo, 0.85)
+        resultado.proveedor_detectado = "Bidafarma"
+        resultado.confianza_proveedor = max(resultado.confianza_proveedor, 0.9)
+    elif resultado.contiene_factura:
+        resultado.warnings.append(
+            "El PDF parece factura Bidafarma, pero no se han detectado albaranes embebidos. Revisar manualmente."
+        )
+
+
+def _analizar_pdf_laboratorio(resultado: ResultadoPreanalisisDocumento, texto: str) -> None:
+    if resultado.perfil_documental != bd.PerfilDocumental.LABORATORIOS.value:
+        return
+    if resultado.extension != ".pdf":
+        return
+    resultado.tipo_documental_detectado = bd.TipoDocumento.FACTURAS.value
+    resultado.confianza_tipo = max(resultado.confianza_tipo, 0.5)
+    if not resultado.pdf_texto_extraible:
+        resultado.warnings.append("Factura de laboratorio escaneada o sin texto extraible; aceptada sin bloqueo.")
+
+
+def _paginas_texto_pdf(texto: str, pdf_paginas: int) -> List[str]:
+    if "\f" in texto:
+        paginas = texto.split("\f")
+    elif "%%PAGE%%" in texto:
+        paginas = texto.split("%%PAGE%%")
+    else:
+        paginas = [texto]
+    if len(paginas) < pdf_paginas:
+        paginas.extend([""] * (pdf_paginas - len(paginas)))
+    return paginas[:pdf_paginas]
+
+
+def _first_match(texto: str, patterns: List[str]) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, texto, flags=re.I)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _count_distinct(items: List[str]) -> int:
+    return len({item for item in items if item})
 
 
 def _score_keywords(texto: str, keyword_map: Dict[str, List[str]]) -> Dict[str, int]:
@@ -345,8 +531,7 @@ def _extraer_texto_pdf_basico(contenido: bytes) -> str:
     textos_parentesis = re.findall(r"\(([^)]{2,})\)", texto)
     if textos_parentesis:
         return " ".join(textos_parentesis)
-    limpio = re.sub(r"[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ _.,;:/-]+", " ", texto)
-    return re.sub(r"\s+", " ", limpio)
+    return ""
 
 
 def _warnings_columnas(columnas: List[str]) -> List[str]:

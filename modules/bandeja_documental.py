@@ -39,6 +39,15 @@ class EstadoDocumento(str, Enum):
     DUPLICADO = "duplicado"
 
 
+class PerfilDocumental(str, Enum):
+    BIDAFARMA = "BIDAFARMA"
+    COFARES = "COFARES"
+    ALLIANCE = "ALLIANCE"
+    HEFAME = "HEFAME"
+    LABORATORIOS = "LABORATORIOS"
+    GENERICO = "GENERICO"
+
+
 EXTENSIONES_ADMITIDAS = {".xlsx", ".xls", ".csv", ".pdf", ".zip"}
 
 CARPETAS_TIPO_DOCUMENTO = {
@@ -128,6 +137,7 @@ class ExpedienteDocumental:
     ruta_almacenamiento: str = ""
     fecha_ultima_actualizacion: str = ""
     dedupe_key: str = ""
+    perfil_documental: str = PerfilDocumental.GENERICO.value
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
