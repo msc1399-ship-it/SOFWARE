@@ -419,20 +419,7 @@ def _aplicar_clasificaciones_transversales(df, df_nomenclator=None):
 
 
 def _mostrar_tarjeta_parafarmacia_financiada(df):
-    if df is None or df.empty or "es_parafarmacia_financiada" not in df.columns:
-        return
-
-    mask = df["es_parafarmacia_financiada"].fillna(False).astype(bool)
-    if not mask.any():
-        return
-
-    parte = df[mask].copy()
-    bruto = pd.to_numeric(parte.get("bruto", 0), errors="coerce").fillna(0).sum()
-    neto = pd.to_numeric(parte.get("neto", 0), errors="coerce").fillna(0).sum()
-    st.success(
-        "Parafarmacia financiada detectada · "
-        f"Líneas: {int(mask.sum())} · Bruto: {bruto:.2f} € · Neto: {neto:.2f} €"
-    )
+    return
 
 
 def _archivo_a_bytes(uploaded_file):
