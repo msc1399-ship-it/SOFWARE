@@ -12,7 +12,10 @@ CONCEPTOS_FIN_BLOQUE = {
     "exento",
 }
 
-PATRON_CARGO_TARIFA = r"margen tramo fijo|tramo fijo|tramo 0|tramo0|diferencia de escala|ajuste escala|escala|cargo tramo|cargo escala"
+PATRON_CARGO_TARIFA = (
+    r"margen tramo fijo|tramo fijo|tramo 0|tramo0|tramo cero|"
+    r"diferencia de escala|ajuste de escala|ajuste escala|escala|cargo tramo|cargo escala"
+)
 
 
 def _normalizar_texto(valor):
@@ -128,7 +131,7 @@ def leer_albaran_faceta_v(file):
 
     es_faceta_v = (
         float(tp) == 74.0 if isinstance(tp, (int, float)) else False
-    ) or "margen tramo fijo" in texto_global or "liquidacion" in texto_global
+    ) or "margen tramo fijo" in texto_global or "liquidacion" in texto_global or "tramo cero" in texto_global or "ajuste de escala" in texto_global
 
     if not es_faceta_v:
         return None
@@ -176,13 +179,13 @@ def detectar_tipo_albaran_74(df_faceta):
 
     conceptos = df_faceta["concepto_normalizado"].astype(str)
 
-    if conceptos.str.contains("tramo 0|tramo0|diferencia de escala|ajuste escala|cargo escala", na=False).any():
+    if conceptos.str.contains("tramo 0|tramo0|tramo cero|diferencia de escala|ajuste de escala|ajuste escala|cargo escala", na=False).any():
         return 3
 
     if conceptos.str.contains("margen tramo fijo|tramo fijo|cargo tramo", na=False).any():
         return 2
 
-    if conceptos.str.contains("liquidacion", na=False).any():
+    if conceptos.str.contains("liquidacion|desglose|especialidad|parafarmacia", na=False).any():
         return 1
 
     return None
