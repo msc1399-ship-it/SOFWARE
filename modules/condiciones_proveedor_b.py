@@ -15,10 +15,43 @@ TIPOS_ALBARAN_74 = {
 CONDICIONES_BIDAFARMA = {
     "X8": {
         "nombre": "Diane Vida",
+        "alias": ["DIANE VIDA"],
         "albaran_74": "puede_aparecer",
         "tipo_albaran_74": 1,
         "ajuste_comercial_factura": False,
         "cargo_adicional_gestion": False,
+        "familia": "DIANE",
+        "albaranes_netos_totalizados": True,
+        "albaranes": {
+            "siempre_netos": True,
+            "descuentos_y_cargos_en_linea": True,
+            "sin_descuento_en_linea_implica_sin_descuento": True,
+            "regularizacion_volumen_puede_aparecer_en_albaran_74": True,
+        },
+        "faceta": {
+            "tipo": "desglose",
+            "regularizacion_volumen": True,
+            "aparicion": "puntual_si_no_alcanza_volumen",
+            "validar_bases": True,
+            "imputacion_regularizacion": "proporcional_por_grupo",
+            "grupos_regularizacion": [
+                "especialidad_normal",
+                "especialidad_cara",
+                "parafarmacia_financiada",
+                "parafarmacia_no_financiada",
+            ],
+            "especialidad_normal_puede_tener_cargo_regularizacion": True,
+            "especialidad_cara_descuento_en_euros": True,
+            "parafarmacia_financiada_separada": True,
+            "parafarmacia_no_financiada_puede_tener_cargo": True,
+        },
+        "liquidaciones": {
+            "en_albaranes_independientes": True,
+            "tipos_albaran": ["TX", "TT"],
+            "TX": "liquidaciones_laboratorios_genericos",
+            "TT": "liquidaciones_resto_laboratorios",
+            "imputacion": "lineas_club_o_laboratorio_detectado",
+        },
     },
     "NN": {
         "nombre": "Diane Cecofar",
