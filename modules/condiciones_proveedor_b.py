@@ -192,6 +192,8 @@ CONDICIONES_BIDAFARMA = {
             "penalizacion_bajo_consumo": True,
             "importe_penalizacion_bajo_consumo": 50.0,
             "umbral_consumo": 5000.0,
+            "reparto_cargo_adicional": "goteo_amplio_sin_especialidad_cara",
+            "incluye_parafarmacia_financiada": True,
         },
     },
     "XR": {
@@ -240,6 +242,8 @@ CONDICIONES_BIDAFARMA = {
             "penalizacion_bajo_consumo": True,
             "importe_penalizacion_bajo_consumo": 50.0,
             "umbral_consumo": 5000.0,
+            "reparto_cargo_adicional": "goteo_amplio_sin_especialidad_cara",
+            "incluye_parafarmacia_financiada": True,
         },
     },
     "NJ": {
@@ -392,10 +396,37 @@ CONDICIONES_BIDAFARMA = {
     },
     "GS": {
         "nombre": "Socofasa",
-        "albaran_74": "solo_liquidaciones",
+        "albaran_74": "no",
         "tipo_albaran_74": None,
         "ajuste_comercial_factura": False,
         "cargo_adicional_gestion": True,
+        "familia": "SOCOFASA",
+        "modelo_condicion": "descuento_cargo_variable_por_linea",
+        "albaranes": {
+            "descuentos_y_cargos_en_linea": True,
+            "descuento_variable_por_linea": True,
+            "sin_tramo_fijo": True,
+            "sin_tramo_cero": True,
+            "sin_ajuste_escala": True,
+        },
+        "analisis_lineas": {
+            "descuento_medio_por_categoria": True,
+            "descuento_medio_por_cn": True,
+            "descuento_medio_por_laboratorio": True,
+        },
+        "liquidaciones": {
+            "en_albaranes_independientes": True,
+            "tipos_albaran": ["84"],
+            "84": "liquidaciones_laboratorios",
+            "imputacion": "lineas_club_o_laboratorio_detectado",
+        },
+        "gestion": {
+            "cargo_fijo_variable_anual": True,
+            "referencia_importe_aproximado": [45.0, 50.0],
+            "actualizable_ipc": True,
+            "reparto_cargo_adicional": "goteo_amplio_sin_especialidad_cara",
+            "incluye_parafarmacia_financiada": True,
+        },
     },
 }
 

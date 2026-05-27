@@ -1834,7 +1834,7 @@ def _render_imputacion_manual_transfer(df_transfer, resultado_transfer, asociaci
     return st.session_state.get("imputaciones_transfer_manuales", [])
 
 
-def _lineas_elegibles_goteo_puro(df):
+def _lineas_elegibles_goteo_puro(df, condicion=None):
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -1849,6 +1849,8 @@ def _lineas_elegibles_goteo_puro(df):
         "es_especialidad_cara",
         pd.Series(False, index=detalle.index),
     ).fillna(False).astype(bool)
+    reglas_gestion = (condicion or {}).get("gestion", {})
+    incluir_parafarmacia_financiada = bool(reglas_gestion.get("incluye_parafarmacia_financiada", False))
     no_parafarmacia_financiada = ~detalle.get(
         "es_parafarmacia_financiada",
         pd.Series(False, index=detalle.index),
@@ -1860,7 +1862,7 @@ def _lineas_elegibles_goteo_puro(df):
         tipo_compra_norm.eq("goteo")
         & seccion_norm.isin(["especialidad", "parafarmacia"])
         & no_especialidad_cara
-        & no_parafarmacia_financiada
+        & (incluir_parafarmacia_financiada | no_parafarmacia_financiada)
         & ~detalle["neto"].lt(0)
         & ~descripcion_norm.str.contains("club", na=False)
         & ~descripcion_norm.str.contains("avantia", na=False)
@@ -1960,11 +1962,11 @@ def _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta=None
     }
 
 
-def _analisis_cargo_adicional_gestion(df, importe_cargo):
+def _analisis_cargo_adicional_gestion(df, importe_cargo, condicion=None):
     if df is None or df.empty or importe_cargo is None or abs(float(importe_cargo)) <= 0.05:
         return None
 
-    detalle = _lineas_elegibles_goteo_puro(df)
+    detalle = _lineas_elegibles_goteo_puro(df, condicion)
     if detalle.empty:
         return None
 
@@ -3183,7 +3185,7 @@ def render_vida_pharma():
                     and condicion_detectada["cargo_adicional_gestion"]
                     and diferencia_gestion > 0.05
                 ):
-                    analisis_cargo_adicional = _analisis_cargo_adicional_gestion(df, diferencia_gestion)
+                    analisis_cargo_adicional = _analisis_cargo_adicional_gestion(df, diferencia_gestion, condicion_detectada)
 
                     if analisis_cargo_adicional:
                         st.warning(
