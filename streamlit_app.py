@@ -1870,7 +1870,7 @@ def _lineas_elegibles_goteo_puro(df):
     return detalle[mask].copy()
 
 
-def _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta=None):
+def _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta=None, condicion=None):
     if df is None or df.empty or ajustes_comerciales is None or ajustes_comerciales.empty:
         return None
 
@@ -1883,8 +1883,17 @@ def _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta=None
     df_base["iva"] = _serie_numerica(df_base, "iva")
     serie_vacia = pd.Series("", index=df_base.index)
     descripcion_norm = df_base.get("descripcion", serie_vacia).astype(str).str.lower()
+    texto_exclusion = pd.Series("", index=df_base.index, dtype="object")
+    for columna in df_base.columns:
+        nombre = _normalizar_nombre_columna(columna)
+        if any(token in nombre for token in ["categoria", "descuento", "cargo", "dc", "observacion", "plataforma"]):
+            texto_exclusion = texto_exclusion + " " + df_base[columna].astype(str).str.lower()
     no_especialidad_cara = ~df_base.get(
         "es_especialidad_cara",
+        pd.Series(False, index=df_base.index),
+    ).fillna(False).astype(bool)
+    no_pedido_especial_bidafarma = ~df_base.get(
+        "es_pedido_especial_bidafarma",
         pd.Series(False, index=df_base.index),
     ).fillna(False).astype(bool)
     tipo_compra_norm = df_base.get("tipo_compra", serie_vacia).astype(str).str.lower().str.strip()
@@ -1895,11 +1904,12 @@ def _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta=None
         & df_base["iva"].eq(4)
         & seccion_norm.eq("especialidad")
         & no_especialidad_cara
+        & no_pedido_especial_bidafarma
         & (df_base["bruto"].abs() <= 96)
         & df_base["bruto"].ne(0)
-        & ~descripcion_norm.str.contains("club", na=False)
-        & ~descripcion_norm.str.contains("avantia", na=False)
-        & ~descripcion_norm.str.contains("bitransfer|bittransfer", na=False)
+        & ~descripcion_norm.str.contains("club|avantia|bitransfer|bittransfer|plataforma|nexo", na=False)
+        & ~texto_exclusion.str.contains("club|avantia|bitransfer|bittransfer|plataforma|nexo", na=False)
+        & ~seccion_norm.isin(["club", "avantia", "bitransfer", "bittransfer", "plataforma", "nexo"])
     )
 
     elegibles = df_base[mask_elegible].copy()
@@ -1912,30 +1922,39 @@ def _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta=None
     if base_aplicacion <= 0:
         return None
 
-    descuento_total = abs(float(ajustes_comerciales["importe"].sum()))
-    if descuento_total <= 0:
+    reglas_ajuste = (condicion or {}).get("ajuste_comercial", {})
+    naturaleza = str(reglas_ajuste.get("naturaleza", "descuento")).lower().strip()
+    es_cargo = naturaleza == "cargo"
+
+    importe_ajuste = abs(float(ajustes_comerciales["importe"].sum()))
+    if importe_ajuste <= 0:
         return None
 
-    descuento_pct = (descuento_total / base_aplicacion) * 100
+    ajuste_pct = (importe_ajuste / base_aplicacion) * 100
     detalle = elegibles[elegibles["bruto"] > 0].copy()
     if detalle.empty:
         return None
 
-    detalle["descuento_ajuste_comercial"] = detalle["bruto"] * (descuento_pct / 100)
-    detalle["neto_con_ajuste_comercial"] = (
-        detalle["neto"] - detalle["descuento_ajuste_comercial"]
-    )
+    importe_linea = detalle["bruto"] * (ajuste_pct / 100)
+    detalle["descuento_ajuste_comercial"] = -importe_linea if es_cargo else importe_linea
+    detalle["cargo_ajuste_comercial"] = importe_linea if es_cargo else 0.0
+    detalle["neto_con_ajuste_comercial"] = detalle["neto"] + importe_linea if es_cargo else detalle["neto"] - importe_linea
     detalle["descuento_ajuste_comercial"] = detalle["descuento_ajuste_comercial"].round(4)
+    detalle["cargo_ajuste_comercial"] = detalle["cargo_ajuste_comercial"].round(4)
     detalle["neto_con_ajuste_comercial"] = detalle["neto_con_ajuste_comercial"].round(4)
 
     return {
         "detalle": detalle,
         "resumen": {
-            "descuento_total": round(descuento_total, 2),
+            "naturaleza": "cargo" if es_cargo else "descuento",
+            "importe_ajuste": round(importe_ajuste, 2),
+            "descuento_total": 0.0 if es_cargo else round(importe_ajuste, 2),
+            "cargo_total": round(importe_ajuste, 2) if es_cargo else 0.0,
             "base_aplicacion": round(base_aplicacion, 2),
             "base_compras": round(base_compras, 2),
             "base_abonos": round(base_abonos, 2),
-            "descuento_pct": round(descuento_pct, 2),
+            "descuento_pct": round(-ajuste_pct if es_cargo else ajuste_pct, 2),
+            "cargo_pct": round(ajuste_pct, 2) if es_cargo else 0.0,
             "lineas_afectadas": len(detalle),
         },
     }
@@ -2827,14 +2846,18 @@ def render_vida_pharma():
             ajustes_comerciales = resultado.get("ajustes_comerciales", pd.DataFrame())
             permite_ajuste = condicion_detectada is None or condicion_detectada["ajuste_comercial_factura"]
             analisis_ajuste = (
-                _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta_bidafarma)
+                _analisis_ajuste_comercial_bidafarma(df, ajustes_comerciales, df_faceta_bidafarma, condicion_detectada)
                 if permite_ajuste else None
             )
 
             if analisis_ajuste:
                 resumen_ajuste = analisis_ajuste["resumen"]
+                etiqueta_ajuste = "cargo comercial" if resumen_ajuste.get("naturaleza") == "cargo" else "ajuste comercial"
+                importe_ajuste = resumen_ajuste.get("importe_ajuste", resumen_ajuste.get("descuento_total", 0))
+                if resumen_ajuste.get("naturaleza") == "cargo":
+                    resumen_ajuste["descuento_total"] = importe_ajuste
                 st.info(
-                    "Se ha detectado un ajuste comercial en factura "
+                    f"Se ha detectado un {etiqueta_ajuste} en factura "
                     f"por {resumen_ajuste['descuento_total']:.2f} € "
                     f"sobre {resumen_ajuste['lineas_afectadas']} líneas. "
                     "El detalle se incluirá en el informe generado."
@@ -2854,6 +2877,13 @@ def render_vida_pharma():
                 s4.metric("bidanatural", f"{resumen_servicios['cargo_vida_natural']:.2f} €")
                 s5.metric("Dif. servicios", f"{resumen_servicios['diferencia_servicios']:.2f} €")
                 s6.metric("Devoluciones", f"{resumen_servicios['cargo_devoluciones']:.2f} €")
+                if resumen_servicios.get("cargo_parafarmacia_variable", 0) > 0:
+                    st.caption(
+                        "Cargo variable estimado sobre parafarmacia no financiada/pañales: "
+                        f"{resumen_servicios['cargo_parafarmacia_variable']:.2f} € "
+                        f"({resumen_servicios['cargo_parafarmacia_variable_pct']:.2f}% sobre "
+                        f"{resumen_servicios['base_parafarmacia_variable']:.2f} € de base bruta)."
+                    )
 
                 if abs(resumen_servicios["diferencia_servicios"]) <= 0.05:
                     st.success("Los servicios de factura cuadran con el cargo calculado de bidanatural.")

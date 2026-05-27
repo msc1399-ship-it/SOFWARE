@@ -579,14 +579,16 @@ def calcular_condiciones_comerciales(
 
     if analisis_ajuste:
         resumen = analisis_ajuste.get("resumen") or {}
-        descuento = float(resumen.get("descuento_total", 0) or 0)
+        naturaleza = str(resumen.get("naturaleza", "descuento")).lower().strip()
+        es_cargo = naturaleza == "cargo"
+        importe = float(resumen.get("cargo_total" if es_cargo else "descuento_total", 0) or 0)
         filas.append({
             "condicion": (condicion_detectada or {}).get("nombre"),
-            "tipo_condicion": "ajuste_comercial",
-            "cargo_total": round(-descuento, 2),
+            "tipo_condicion": "cargo_comercial" if es_cargo else "ajuste_comercial",
+            "cargo_total": round(importe if es_cargo else -importe, 2),
             "base_aplicacion": resumen.get("base_aplicacion"),
             "lineas_afectadas": resumen.get("lineas_afectadas"),
-            "impacto_sobre_neto": round(-descuento, 2),
+            "impacto_sobre_neto": round(importe if es_cargo else -importe, 2),
             "impacto_sobre_descuento_real": resumen.get("descuento_pct"),
             "origen": "factura_normal",
         })

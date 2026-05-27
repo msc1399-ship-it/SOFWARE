@@ -168,6 +168,7 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
     )
     imputar_devoluciones = reglas_servicios.get("devoluciones_por_defecto", True)
     pct_devoluciones = reglas_servicios.get("devoluciones_pct", 2.5)
+    calcular_cargo_parafarmacia = reglas_servicios.get("cargo_parafarmacia_variable", False)
     total_servicios_factura = importe_servicios_factura(gastos_factura)
 
     vida_natural = df_goteo[df_goteo["observaciones"].apply(_contiene_observacion_b)].copy()
@@ -192,8 +193,48 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
     total_devoluciones = 0.0
     imputacion_devoluciones = pd.DataFrame()
     pendiente_otros_gastos = pd.DataFrame()
+    cargo_parafarmacia = 0.0
+    cargo_parafarmacia_pct = 0.0
+    base_parafarmacia_cargo = 0.0
+    detalle_parafarmacia_cargo = pd.DataFrame()
+    diferencia_para_devoluciones = diferencia_servicios
 
-    if diferencia_servicios > 0.05 and imputar_devoluciones:
+    if diferencia_servicios > 0.05 and calcular_cargo_parafarmacia:
+        serie_vacia = pd.Series("", index=df_goteo.index)
+        seccion = df_goteo.get("seccion_albaran", serie_vacia).astype(str).str.lower().str.strip()
+        descripcion = df_goteo.get("descripcion", serie_vacia).astype(str).str.lower()
+        tipo_parafarmacia = df_goteo.get("tipo_parafarmacia", serie_vacia).astype(str).str.lower().str.strip()
+        es_parafarmacia_financiada = df_goteo.get(
+            "es_parafarmacia_financiada",
+            pd.Series(False, index=df_goteo.index),
+        ).fillna(False).astype(bool)
+        patrones_panales = reglas_servicios.get("patrones_panales", ["pañal", "panal", "pant", "noche", "inco"])
+        patron_panales = "|".join(str(patron) for patron in patrones_panales)
+        mask_panales = descripcion.str.contains(patron_panales, na=False) if patron_panales else False
+        mask_parafarmacia_cargo = (
+            df_goteo["bruto"].gt(0)
+            & (
+                (seccion.eq("parafarmacia") & ~es_parafarmacia_financiada)
+                | tipo_parafarmacia.eq("no_financiada")
+                | mask_panales
+            )
+        )
+        detalle_parafarmacia_cargo = df_goteo[mask_parafarmacia_cargo].copy()
+        base_parafarmacia_cargo = round(float(detalle_parafarmacia_cargo["bruto"].abs().sum()), 2)
+
+        abonos_base = df_goteo[df_goteo["neto"] < 0].copy()
+        devoluciones_teoricas = round(
+            float(abonos_base["bruto"].abs().sum()) * (float(pct_devoluciones) / 100),
+            2,
+        ) if not abonos_base.empty else 0.0
+        cargo_parafarmacia = round(max(diferencia_servicios - devoluciones_teoricas, 0.0), 2)
+        cargo_parafarmacia_pct = round(
+            (cargo_parafarmacia / base_parafarmacia_cargo * 100),
+            4,
+        ) if base_parafarmacia_cargo > 0 else 0.0
+        diferencia_para_devoluciones = round(max(diferencia_servicios - cargo_parafarmacia, 0.0), 2)
+
+    if diferencia_para_devoluciones > 0.05 and imputar_devoluciones:
         abonos = df_goteo[df_goteo["neto"] < 0].copy()
         if not abonos.empty:
             abonos["tipo_servicio"] = "devoluciones"
@@ -205,7 +246,7 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
             if total_teorico_abonos > 0:
                 abonos["cargo_servicio"] = (
                     abonos["cargo_teorico"] / total_teorico_abonos
-                ) * diferencia_servicios
+                ) * diferencia_para_devoluciones
             else:
                 abonos["cargo_servicio"] = 0.0
 
@@ -289,10 +330,13 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
         "servicios_factura": total_servicios_factura,
         "cargo_vida_natural": total_vida_natural,
         "diferencia_servicios": diferencia_servicios,
+        "cargo_parafarmacia_variable": cargo_parafarmacia,
+        "cargo_parafarmacia_variable_pct": cargo_parafarmacia_pct,
+        "base_parafarmacia_variable": base_parafarmacia_cargo,
         "cargo_devoluciones": total_devoluciones,
         "imputa_devoluciones": imputar_devoluciones,
-        "devoluciones_cuadran": abs(diferencia_servicios - total_devoluciones) <= 0.05
-        and diferencia_servicios > 0.05,
+        "devoluciones_cuadran": abs(diferencia_para_devoluciones - total_devoluciones) <= 0.05
+        and diferencia_para_devoluciones > 0.05,
     }
 
     return {
@@ -300,5 +344,6 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
         "resumen_cn": resumen_cn,
         "imputacion_devoluciones": imputacion_devoluciones,
         "pendiente_otros_gastos": pendiente_otros_gastos,
+        "detalle_parafarmacia_cargo": detalle_parafarmacia_cargo,
         "resumen": resumen,
     }
