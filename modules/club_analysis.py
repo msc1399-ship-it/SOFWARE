@@ -2,6 +2,8 @@ import unicodedata
 
 import pandas as pd
 
+from modules import vida_pharma_clubes
+
 
 def _df_seguro(df):
     if df is None:
@@ -334,11 +336,16 @@ def calcular_diferencia_siguiente_tramo(df_escalados):
         "laboratorio",
         "familia",
         "grupo",
+        "modo",
         "compra_real",
+        "base_liquidable",
         "siguiente_tramo",
         "diferencia_para_siguiente_tramo",
+        "porcentaje_liquidacion",
+        "liquidacion_esperada",
         "liquidacion_actual",
         "liquidacion_potencial",
+        "fuente",
     ]
     columnas = [col for col in columnas if col in escalados.columns]
     return escalados[columnas].copy()
@@ -364,12 +371,15 @@ def calcular_liquidacion_potencial(df_escalados):
         "laboratorio",
         "familia",
         "grupo",
+        "modo",
         "compra_real",
+        "base_liquidable",
         "siguiente_tramo",
         "diferencia_para_siguiente_tramo",
         "liquidacion_actual",
         "liquidacion_potencial",
         "perdida_potencial",
+        "fuente",
     ]
     columnas = [col for col in columnas if col in oportunidades.columns]
     return oportunidades[columnas].sort_values("perdida_potencial", ascending=False).reset_index(drop=True)
@@ -460,8 +470,19 @@ def analizar_clubes(
 
     documento = df_liquidaciones if df_liquidaciones is not None else df_escalados
     documento_norm = normalizar_documento_clubes(documento)
+    escalados_master = pd.DataFrame()
     if documento_norm.empty:
-        alertas.append("Falta documento de escalados/liquidaciones para calcular perdida real.")
+        if _normalizar_texto(proveedor) in {"bidafarma", "vida pharma", "vidapharma"}:
+            escalados_master = vida_pharma_clubes.generar_prevision_escalados(df_compras)
+        if escalados_master.empty:
+            alertas.append("Falta documento de escalados/liquidaciones para calcular perdida real.")
+        else:
+            modo = str(escalados_master["modo"].iloc[0]).upper()
+            alertas.append(
+                "Se usa la base maestra de escalados Vida Pharma "
+                f"({modo}) para estimar liquidaciones esperadas. "
+                "Faltan listados de moleculas para separar suma de escalado y base liquidable definitiva."
+            )
     else:
         columnas_minimas = {"liquidacion_actual", "liquidacion_potencial", "siguiente_tramo"}
         faltantes = sorted(col for col in columnas_minimas if col not in documento_norm.columns)
@@ -493,8 +514,9 @@ def analizar_clubes(
     if descuento_habitual is None:
         alertas.append("No hay descuento habitual de especialidad disponible para estimar perdida vs condicion comercial.")
 
-    escalados = calcular_diferencia_siguiente_tramo(documento_norm)
-    oportunidades = calcular_liquidacion_potencial(documento_norm)
+    base_escalados = escalados_master if not escalados_master.empty else documento_norm
+    escalados = calcular_diferencia_siguiente_tramo(base_escalados)
+    oportunidades = calcular_liquidacion_potencial(base_escalados)
 
     return {
         "ok": True,
