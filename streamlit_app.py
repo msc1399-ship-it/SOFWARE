@@ -69,6 +69,7 @@ SECCIONES = [
     "Facturas laboratorios",
     "Ventas farmacia",
     "Stock",
+    "Simulador condiciones",
     "Resumen",
 ]
 
@@ -1325,10 +1326,10 @@ def render_recomendaciones_ia():
     _mostrar_lista_recomendaciones("Advertencias", recomendaciones.get("advertencias"))
 
 
-def render_simulador_condiciones(key_prefix="simulador"):
+def render_simulador_condiciones(key_prefix="simulador", mostrar_sin_analisis=False):
     analisis_distribuidora = st.session_state.get("analisis_distribuidora", {})
     resumen_final = st.session_state.get("resumen_final_auditoria")
-    if not analisis_distribuidora and not resumen_final:
+    if not analisis_distribuidora and not resumen_final and not mostrar_sin_analisis:
         return
 
     base_actual = condition_simulator.construir_base_historica_expediente(analisis_distribuidora)
@@ -3783,5 +3784,7 @@ elif seccion_activa == "Ventas farmacia":
     render_ventas_farmacia()
 elif seccion_activa == "Stock":
     render_stock()
+elif seccion_activa == "Simulador condiciones":
+    render_simulador_condiciones(key_prefix="simulador_lateral", mostrar_sin_analisis=True)
 elif seccion_activa == "Resumen":
     render_resumen()
