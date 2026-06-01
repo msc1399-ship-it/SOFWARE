@@ -28,6 +28,7 @@ import modules.parafarmacia as parafarmacia
 import modules.bidafarma_special_orders as bidafarma_special_orders
 import modules.transfer_manual_mapping as transfer_manual_mapping
 import modules.maestros_persistentes as maestros_persistentes
+import modules.condition_simulator as condition_simulator
 
 bitransfer = importlib.reload(bitransfer)
 servicios = importlib.reload(servicios)
@@ -46,6 +47,7 @@ parafarmacia = importlib.reload(parafarmacia)
 bidafarma_special_orders = importlib.reload(bidafarma_special_orders)
 transfer_manual_mapping = importlib.reload(transfer_manual_mapping)
 maestros_persistentes = importlib.reload(maestros_persistentes)
+condition_simulator = importlib.reload(condition_simulator)
 
 try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
@@ -1323,6 +1325,223 @@ def render_recomendaciones_ia():
     _mostrar_lista_recomendaciones("Advertencias", recomendaciones.get("advertencias"))
 
 
+def render_simulador_condiciones(key_prefix="simulador"):
+    analisis_distribuidora = st.session_state.get("analisis_distribuidora", {})
+    resumen_final = st.session_state.get("resumen_final_auditoria")
+    if not analisis_distribuidora and not resumen_final:
+        return
+
+    base_actual = condition_simulator.construir_base_historica_expediente(analisis_distribuidora)
+
+    st.header("Simulador de condiciones comerciales")
+    st.caption(
+        "Simula cambios de descuento, derivacion de volumen, cargos, penalizaciones y condiciones especiales con datos agregados."
+    )
+
+    if base_actual.empty:
+        st.info("No hay una base historica suficiente. Puedes crear un escenario manual para hacer una primera simulacion.")
+        proveedor_manual = st.text_input("Proveedor", value="proveedor", key=f"{key_prefix}_proveedor_manual")
+        compra_manual = st.number_input(
+            "Compra media mensual",
+            min_value=0.0,
+            value=0.0,
+            step=100.0,
+            key=f"{key_prefix}_compra_manual",
+        )
+        base_actual = pd.DataFrame([{
+            "proveedor": proveedor_manual or "proveedor",
+            "compra_media_mensual": compra_manual,
+            "compra_media_especialidad_normal": compra_manual,
+            "compra_media_especialidad_cara": 0.0,
+            "unidades_especialidad_cara": 0.0,
+            "descuento_medio_especialidad_cara_euros": 0.0,
+            "compra_media_parafarmacia_financiada": 0.0,
+            "compra_media_parafarmacia_no_financiada": 0.0,
+            "compra_media_transfer": 0.0,
+            "compra_media_bitransfer": 0.0,
+            "compra_media_clubes": 0.0,
+            "descuento_real_especialidad": 0.0,
+            "descuento_real_parafarmacia": 0.0,
+            "descuento_real_transfer": 0.0,
+            "descuento_real_bitransfer": 0.0,
+            "descuento_real_general": 0.0,
+            "cargos_actuales": 0.0,
+            "franquicia_actual": 0.0,
+            "gasto_fijo_actual": 0.0,
+            "rentabilidad_real_actual": 0.0,
+        }])
+
+    proveedores = base_actual["proveedor"].dropna().astype(str).unique().tolist() if "proveedor" in base_actual.columns else ["proveedor"]
+    if not proveedores:
+        proveedores = ["proveedor"]
+
+    proveedor_destino = st.selectbox("Proveedor principal del escenario", proveedores, key=f"{key_prefix}_proveedor_destino")
+    proveedor_origen_opciones = ["Sin proveedor origen"] + [p for p in proveedores if p != proveedor_destino]
+    proveedor_origen = st.selectbox(
+        "Proveedor desde el que se deriva volumen",
+        proveedor_origen_opciones,
+        key=f"{key_prefix}_proveedor_origen",
+    )
+
+    base_proveedor = base_actual[base_actual["proveedor"].astype(str).eq(str(proveedor_destino))]
+    base_proveedor = base_proveedor.iloc[0].to_dict() if not base_proveedor.empty else base_actual.iloc[0].to_dict()
+
+    st.subheader("Condicion actual detectada")
+    _tarjetas_metricas([
+        {"label": "Proveedor", "value": proveedor_destino},
+        {"label": "Compra media mensual", "value": f"{float(base_proveedor.get('compra_media_mensual', 0) or 0):.2f} EUR"},
+        {"label": "Desc. especialidad", "value": f"{float(base_proveedor.get('descuento_real_especialidad', 0) or 0):.2f}%"},
+        {"label": "Desc. parafarmacia", "value": f"{float(base_proveedor.get('descuento_real_parafarmacia', 0) or 0):.2f}%"},
+        {"label": "Cargos actuales", "value": f"{float(base_proveedor.get('cargos_actuales', 0) or 0):.2f} EUR"},
+        {"label": "Rentabilidad actual", "value": f"{float(base_proveedor.get('rentabilidad_real_actual', 0) or 0):.2f}%"},
+    ])
+
+    with st.form(f"{key_prefix}_form_simulador_condiciones"):
+        st.subheader("Nuevo escenario")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            nuevo_descuento_especialidad = st.number_input(
+                "Nuevo descuento especialidad normal (%)",
+                min_value=-100.0,
+                max_value=100.0,
+                value=float(base_proveedor.get("descuento_real_especialidad", 0) or 0),
+                step=0.10,
+                key=f"{key_prefix}_nuevo_desc_esp",
+            )
+            nuevo_descuento_parafarmacia = st.number_input(
+                "Nuevo descuento parafarmacia no financiada (%)",
+                min_value=-100.0,
+                max_value=100.0,
+                value=float(base_proveedor.get("descuento_real_parafarmacia", 0) or 0),
+                step=0.10,
+                key=f"{key_prefix}_nuevo_desc_para",
+            )
+            nuevo_descuento_cara = st.number_input(
+                "Nuevo descuento especialidad cara (EUR/linea)",
+                min_value=-1000.0,
+                max_value=1000.0,
+                value=float(base_proveedor.get("descuento_medio_especialidad_cara_euros", 0) or 0),
+                step=0.10,
+                key=f"{key_prefix}_nuevo_desc_cara",
+            )
+        with col2:
+            nuevo_descuento_transfer = st.number_input(
+                "Nuevo descuento transfer (%)",
+                min_value=-100.0,
+                max_value=100.0,
+                value=float(base_proveedor.get("descuento_real_transfer", 0) or 0),
+                step=0.10,
+                key=f"{key_prefix}_nuevo_desc_transfer",
+            )
+            nuevo_descuento_bitransfer = st.number_input(
+                "Nuevo descuento Bitransfer (%)",
+                min_value=-100.0,
+                max_value=100.0,
+                value=float(base_proveedor.get("descuento_real_bitransfer", 0) or 0),
+                step=0.10,
+                key=f"{key_prefix}_nuevo_desc_bitransfer",
+            )
+            volumen_objetivo = st.number_input(
+                "Volumen mensual objetivo",
+                min_value=0.0,
+                value=float(base_proveedor.get("compra_media_mensual", 0) or 0),
+                step=100.0,
+                key=f"{key_prefix}_volumen_objetivo",
+            )
+        with col3:
+            volumen_derivar = st.number_input(
+                "Volumen a derivar desde otro proveedor",
+                min_value=0.0,
+                value=0.0,
+                step=100.0,
+                key=f"{key_prefix}_volumen_derivar",
+            )
+            nuevos_cargos = st.number_input(
+                "Cargos/franquicia mensual del escenario",
+                min_value=0.0,
+                value=float(base_proveedor.get("cargos_actuales", 0) or 0) + float(base_proveedor.get("franquicia_actual", 0) or 0),
+                step=10.0,
+                key=f"{key_prefix}_nuevos_cargos",
+            )
+            penalizacion = st.number_input(
+                "Penalizacion bajo consumo proveedor afectado",
+                min_value=0.0,
+                value=0.0,
+                step=10.0,
+                key=f"{key_prefix}_penalizacion",
+            )
+
+        col4, col5 = st.columns(2)
+        with col4:
+            liquidaciones_adicionales = st.number_input(
+                "Liquidaciones adicionales estimadas",
+                min_value=0.0,
+                value=0.0,
+                step=10.0,
+                key=f"{key_prefix}_liquidaciones_adicionales",
+            )
+        with col5:
+            liquidaciones_perdidas = st.number_input(
+                "Liquidaciones perdidas estimadas",
+                min_value=0.0,
+                value=0.0,
+                step=10.0,
+                key=f"{key_prefix}_liquidaciones_perdidas",
+            )
+
+        simular = st.form_submit_button("Simular escenario")
+
+    if simular:
+        escenario = {
+            "nombre": "escenario_propuesto",
+            "proveedor_destino": proveedor_destino,
+            "proveedor_origen": None if proveedor_origen == "Sin proveedor origen" else proveedor_origen,
+            "nuevo_descuento_especialidad_pct": nuevo_descuento_especialidad,
+            "nuevo_descuento_parafarmacia_pct": nuevo_descuento_parafarmacia,
+            "nuevo_descuento_especialidad_cara_euros": nuevo_descuento_cara,
+            "nuevo_descuento_transfer_pct": nuevo_descuento_transfer,
+            "nuevo_descuento_bitransfer_pct": nuevo_descuento_bitransfer,
+            "volumen_mensual_objetivo": volumen_objetivo,
+            "volumen_derivar": volumen_derivar,
+            "nuevo_cargo_fijo_mensual": nuevos_cargos,
+            "penalizacion_bajo_consumo_proveedor_afectado": penalizacion,
+            "liquidaciones_adicionales": liquidaciones_adicionales,
+            "liquidaciones_perdidas": liquidaciones_perdidas,
+        }
+        resultado = condition_simulator.simular_escenario_condiciones(base_actual, escenario)
+        st.session_state[f"{key_prefix}_resultado_simulador_condiciones"] = resultado
+        st.session_state["resultado_simulador_condiciones"] = resultado
+
+    resultado = st.session_state.get(f"{key_prefix}_resultado_simulador_condiciones")
+    if not resultado:
+        return
+
+    st.subheader("Resultado de simulacion")
+    _tarjetas_metricas([
+        {"label": "Impacto mensual", "value": f"{resultado.get('impacto_mensual', 0):.2f} EUR"},
+        {"label": "Impacto anual", "value": f"{resultado.get('impacto_anual', 0):.2f} EUR"},
+        {"label": "Escenario", "value": resultado.get("escenario_propuesto", {}).get("nombre", "propuesto")},
+    ])
+
+    st.info(resultado.get("recomendacion", "Sin recomendacion disponible."))
+
+    detalle_proveedor = resultado.get("detalle_por_proveedor", pd.DataFrame())
+    if detalle_proveedor is not None and not detalle_proveedor.empty:
+        st.caption("Desglose por proveedor")
+        _mostrar_tabla_dashboard(detalle_proveedor)
+
+    detalle_categoria = resultado.get("detalle_por_categoria", pd.DataFrame())
+    if detalle_categoria is not None and not detalle_categoria.empty:
+        st.caption("Desglose por categoria")
+        _mostrar_tabla_dashboard(detalle_categoria)
+
+    col_riesgos, col_oportunidades = st.columns(2)
+    with col_riesgos:
+        _mostrar_lista_recomendaciones("Riesgos", resultado.get("riesgos"))
+    with col_oportunidades:
+        _mostrar_lista_recomendaciones("Oportunidades", resultado.get("oportunidades"))
+
+
 def _serie_numerica(df, columna):
     if df is None or columna not in df.columns:
         return pd.Series([0.0] * len(df), index=df.index if df is not None else None)
@@ -2373,6 +2592,7 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
     if analisis_guardado:
         _mostrar_analisis_distribuidora(analisis_guardado)
         render_recomendaciones_ia()
+        render_simulador_condiciones(key_prefix=f"simulador_{proveedor_id}")
 
 
 def render_facturas_laboratorios():
@@ -2661,6 +2881,7 @@ def render_resumen():
         st.info("Genera primero los análisis individuales.")
 
     render_recomendaciones_ia()
+    render_simulador_condiciones(key_prefix="simulador_resumen")
 
 
 def render_vida_pharma():
@@ -3426,6 +3647,7 @@ def render_vida_pharma():
     if analisis_guardado:
         _mostrar_analisis_distribuidora(analisis_guardado)
         render_recomendaciones_ia()
+        render_simulador_condiciones(key_prefix="simulador_bidafarma")
 
 
 def render_contexto_farmacia():
