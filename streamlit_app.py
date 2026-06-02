@@ -913,7 +913,6 @@ def _mostrar_vistas_albaranes(df):
         total_neto = df_tipo["neto"].sum()
         total_abonos = abonos["neto"].sum()
 
-        descuento = (total_bruto - total_neto) / total_bruto * 100 if total_bruto else 0
         descuentos_dc = _serie_porcentaje_descuento_cargo(df_tipo)
         descuento_dc_medio = float(descuentos_dc.mean()) if not descuentos_dc.empty else None
 
@@ -923,8 +922,7 @@ def _mostrar_vistas_albaranes(df):
             {"label": "Unidades", "value": int(df_tipo["unidades"].sum())},
             {"label": "Bruto", "value": f"{total_bruto:.1f} €"},
             {"label": "Neto", "value": f"{total_neto:.1f} €"},
-            {"label": "Desc econ.", "value": f"{descuento:.2f}%"},
-            {"label": "Media D/C", "value": "-" if descuento_dc_medio is None else f"{descuento_dc_medio:.2f}%"},
+            {"label": "Desc medio", "value": "-" if descuento_dc_medio is None else f"{descuento_dc_medio:.2f}%"},
             {"label": "Abonos", "value": f"{abs(total_abonos):.1f} €"},
             {"label": "Base IVA 4%", "value": f"{bases_iva['base_iva_4']:.2f} €"},
             {"label": "Base IVA 10%", "value": f"{bases_iva['base_iva_10']:.2f} €"},
@@ -1803,23 +1801,39 @@ def _serie_porcentaje_descuento_cargo(df):
     if columna is None:
         return pd.Series(dtype="float64")
     serie = df[columna]
-    if pd.api.types.is_numeric_dtype(serie):
-        numeros = pd.to_numeric(serie, errors="coerce")
-    else:
+
+    def convertir_porcentaje(valor):
+        if pd.isna(valor):
+            return 0.0
+        if not isinstance(valor, str):
+            numero = pd.to_numeric(valor, errors="coerce")
+            if pd.isna(numero):
+                return 0.0
+            numero = float(numero)
+            return numero * 100 if abs(numero) <= 1 else numero
+
+        texto = str(valor).strip().lower()
+        if not texto or texto in {"-", "club", "nan", "none"}:
+            return 0.0
         texto = (
-            serie.astype(str)
-            .str.replace("%", "", regex=False)
-            .str.replace("â‚¬", "", regex=False)
-            .str.replace("EUR", "", regex=False)
-            .str.replace(" ", "", regex=False)
-            .str.strip()
+            texto.replace("%", "")
+            .replace("€", "")
+            .replace("eur", "")
+            .replace(" ", "")
+            .strip()
         )
-        texto = texto.str.replace(r"\.(?=\d{3}(?:\D|$))", "", regex=True)
-        texto = texto.str.replace(",", ".", regex=False)
-        numeros = pd.to_numeric(texto, errors="coerce")
-    numeros = numeros.dropna()
-    numeros = numeros.where(numeros.abs().gt(1), numeros * 100)
-    return numeros
+        if "," in texto and "." in texto:
+            texto = texto.replace(".", "").replace(",", ".")
+        else:
+            texto = texto.replace(",", ".")
+        numero = pd.to_numeric(texto, errors="coerce")
+        if pd.isna(numero):
+            return 0.0
+        numero = float(numero)
+        return numero * 100 if abs(numero) <= 1 else numero
+
+    numeros = serie.apply(convertir_porcentaje)
+    return numeros.reindex(df.index, fill_value=0.0)
 
 
 def _mask_lineas_faceta_en_df(df):
