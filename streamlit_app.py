@@ -56,6 +56,12 @@ try:
 except Exception:
     APP_PASSWORD = ""
 MAX_UPLOAD_MB = 50
+ANALISIS_DISTRIBUIDORA_VERSION = "zv_tramo_fijo_unidades_v2"
+
+if st.session_state.get("_analisis_distribuidora_version") != ANALISIS_DISTRIBUIDORA_VERSION:
+    st.session_state.pop("analisis_distribuidora", None)
+    st.session_state.pop("resumen_final_auditoria", None)
+    st.session_state["_analisis_distribuidora_version"] = ANALISIS_DISTRIBUIDORA_VERSION
 
 PROVEEDORES_BASE = {
     "cofares": "cofares",
@@ -935,11 +941,17 @@ def _mostrar_vistas_albaranes(df):
 
 
 def _guardar_analisis_distribuidora(proveedor_id, analisis):
+    if isinstance(analisis, dict):
+        analisis["_version"] = ANALISIS_DISTRIBUIDORA_VERSION
     analisis_actuales = st.session_state.get("analisis_distribuidora", {})
     if not isinstance(analisis_actuales, dict):
         analisis_actuales = {}
     analisis_actuales[proveedor_id] = analisis
     st.session_state["analisis_distribuidora"] = analisis_actuales
+
+
+def _analisis_distribuidora_valido(analisis):
+    return isinstance(analisis, dict) and analisis.get("_version") == ANALISIS_DISTRIBUIDORA_VERSION
 
 
 def _mostrar_analisis_clubes(analisis_clubes):
@@ -1273,9 +1285,9 @@ def _obtener_analisis_distribuidora_principal():
     analisis_distribuidora = st.session_state.get("analisis_distribuidora", {})
     if isinstance(analisis_distribuidora, dict):
         for analisis in analisis_distribuidora.values():
-            if analisis and analisis.get("ok"):
+            if _analisis_distribuidora_valido(analisis) and analisis.get("ok"):
                 return analisis
-    elif analisis_distribuidora and analisis_distribuidora.get("ok"):
+    elif _analisis_distribuidora_valido(analisis_distribuidora) and analisis_distribuidora.get("ok"):
         return analisis_distribuidora
     return None
 
@@ -2699,6 +2711,8 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
 
     st.header("3️⃣ Análisis")
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get(proveedor_id)
+    if not _analisis_distribuidora_valido(analisis_guardado):
+        analisis_guardado = None
     descuento_goteo_real = _descuento_goteo_real_desde_resumen(analisis_distribuidora=analisis_guardado)
     analisis_clubes = _render_bloque_clubes(proveedor_id, df, descuento_goteo_real=descuento_goteo_real)
 
@@ -2721,6 +2735,8 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
         _guardar_analisis_distribuidora(proveedor_id, analisis)
 
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get(proveedor_id)
+    if not _analisis_distribuidora_valido(analisis_guardado):
+        analisis_guardado = None
     if analisis_guardado:
         _mostrar_analisis_distribuidora(analisis_guardado)
         render_recomendaciones_ia()
@@ -3560,6 +3576,8 @@ def render_vida_pharma():
                 analisis_transfer=None,
             )
             analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
+            if not _analisis_distribuidora_valido(analisis_guardado):
+                analisis_guardado = None
             descuento_goteo_real = _descuento_goteo_real_desde_resumen(
                 resumen_bidafarma=resumen_final,
                 analisis_distribuidora=analisis_guardado,
@@ -3735,6 +3753,8 @@ def render_vida_pharma():
     st.divider()
     st.header("Generación de informe")
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
+    if not _analisis_distribuidora_valido(analisis_guardado):
+        analisis_guardado = None
     descuento_goteo_real = _descuento_goteo_real_desde_resumen(
         resumen_bidafarma=resumen_final,
         analisis_distribuidora=analisis_guardado,
@@ -3774,6 +3794,8 @@ def render_vida_pharma():
         _guardar_analisis_distribuidora("bidafarma", analisis)
 
     analisis_guardado = st.session_state.get("analisis_distribuidora", {}).get("bidafarma")
+    if not _analisis_distribuidora_valido(analisis_guardado):
+        analisis_guardado = None
     if analisis_guardado:
         _mostrar_analisis_distribuidora(analisis_guardado)
         render_recomendaciones_ia()
