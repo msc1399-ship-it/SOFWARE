@@ -166,7 +166,11 @@ def detectar_parafarmacia_financiada(df_compras, df_nomenclator=None):
     sin_nomenclator = df_nomenclator is None or df_nomenclator.empty
 
     if not sin_nomenclator:
-        nomenclator = normalizar_columnas_nomenclator(df_nomenclator)
+        columnas_norm = {"cn", "financiado", "laboratorio_nomenclator", "familia_nomenclator", "descripcion_nomenclator"}
+        if columnas_norm.issubset(set(df_nomenclator.columns)):
+            nomenclator = df_nomenclator.copy()
+        else:
+            nomenclator = normalizar_columnas_nomenclator(df_nomenclator)
         financiados = set(nomenclator.loc[nomenclator["financiado"], "cn"].dropna().astype(str))
         mask_nomenclator = cn.astype(str).isin(financiados)
         extras = nomenclator[["cn", "laboratorio_nomenclator", "familia_nomenclator", "descripcion_nomenclator"]]

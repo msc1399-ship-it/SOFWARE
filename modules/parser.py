@@ -33,32 +33,19 @@ def normalize_columns(df):
 # ==========================
 
 def parse_sections(df):
+    if df is None or df.empty:
+        return df
 
-    secciones = []
+    resultado = df.copy()
+    descripcion = resultado.get("descripcion", pd.Series("", index=resultado.index)).astype(str).str.lower()
+    iva = pd.to_numeric(resultado.get("iva", pd.Series(pd.NA, index=resultado.index)), errors="coerce")
 
-    for _, row in df.iterrows():
+    secciones = pd.Series("desconocido", index=resultado.index, dtype="object")
+    secciones[iva.eq(4)] = "especialidad"
+    secciones[iva.isin([10, 21])] = "parafarmacia"
+    secciones[descripcion.str.contains("club", na=False)] = "club"
+    secciones[descripcion.str.contains("avantia", na=False)] = "avantia"
+    secciones[descripcion.str.contains("bitransfer", na=False)] = "bitransfer"
 
-        descripcion = str(row.get("descripcion", "")).lower()
-        iva = row.get("iva", None)
-
-        if "bitransfer" in descripcion:
-            secciones.append("bitransfer")
-
-        elif "avantia" in descripcion:
-            secciones.append("avantia")
-
-        elif "club" in descripcion:
-            secciones.append("club")
-
-        elif iva == 4:
-            secciones.append("especialidad")
-
-        elif iva in [10, 21]:
-            secciones.append("parafarmacia")
-
-        else:
-            secciones.append("desconocido")
-
-    df["seccion_albaran"] = secciones
-
-    return df
+    resultado["seccion_albaran"] = secciones
+    return resultado

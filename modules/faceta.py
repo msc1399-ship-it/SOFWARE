@@ -195,13 +195,31 @@ def es_linea_faceta(valor_tipo=None, valor_descripcion=None):
     tipo_texto = _normalizar_texto(valor_tipo)
     descripcion_texto = _normalizar_texto(valor_descripcion)
 
-    if tipo_texto in {"74", "tp74"}:
+    if tipo_texto in {"74", "tp74"} or re.fullmatch(r"74(?:\.0)?", tipo_texto or ""):
         return True
 
-    if "margen tramo fijo" in descripcion_texto or "liquidacion" in descripcion_texto:
+    if (
+        "margen tramo fijo" in descripcion_texto
+        or "tramo fijo" in descripcion_texto
+        or "albaran 74" in descripcion_texto
+        or "liquidacion" in descripcion_texto
+    ):
         return True
 
     return False
+
+
+def _combinar_columnas_texto(df, columnas):
+    piezas = []
+    for columna in columnas:
+        if columna in df.columns:
+            piezas.append(df[columna].fillna("").astype(str))
+    if not piezas:
+        return pd.Series([""] * len(df), index=df.index)
+    combinado = piezas[0]
+    for pieza in piezas[1:]:
+        combinado = combinado + " " + pieza
+    return combinado
 
 
 def extraer_faceta_desde_lineas(df_compras):
@@ -209,8 +227,18 @@ def extraer_faceta_desde_lineas(df_compras):
         return pd.DataFrame()
 
     df = df_compras.copy()
-    tipos = df["tipo"] if "tipo" in df.columns else pd.Series([""] * len(df), index=df.index)
-    descripciones = df["descripcion"] if "descripcion" in df.columns else pd.Series([""] * len(df), index=df.index)
+    columnas_tipo = [
+        col for col in df.columns
+        if _normalizar_texto(col) in {"tipo", "tipo albaran", "tipo_albaran", "tp"}
+        or ("tipo" in _normalizar_texto(col) and "albaran" in _normalizar_texto(col))
+    ]
+    columnas_descripcion = [
+        col for col in df.columns
+        if any(token in _normalizar_texto(col) for token in ["descripcion", "categoria", "observacion"])
+        or col == "tipo_albaran_bidafarma"
+    ]
+    tipos = _combinar_columnas_texto(df, columnas_tipo)
+    descripciones = _combinar_columnas_texto(df, columnas_descripcion)
 
     mask_faceta = pd.Series(
         [es_linea_faceta(tipo, descripcion) for tipo, descripcion in zip(tipos, descripciones)],
@@ -222,10 +250,14 @@ def extraer_faceta_desde_lineas(df_compras):
         return pd.DataFrame()
 
     serie_vacia_faceta = pd.Series("", index=df_faceta.index)
-    df_faceta["concepto"] = df_faceta.get("descripcion", serie_vacia_faceta).astype(str)
+    concepto_base = _combinar_columnas_texto(df_faceta, columnas_descripcion)
+    df_faceta["concepto"] = concepto_base.where(concepto_base.str.strip().ne(""), df_faceta.get("descripcion", serie_vacia_faceta).astype(str))
     df_faceta["concepto_normalizado"] = df_faceta["concepto"].apply(_normalizar_texto)
     df_faceta["importe"] = _serie_numerica(df_faceta, "neto")
-    df_faceta["tp"] = _serie_numerica(df_faceta, "tipo")
+    if columnas_tipo:
+        df_faceta["tp"] = pd.to_numeric(_combinar_columnas_texto(df_faceta, columnas_tipo).str.extract(r"(\d+)")[0], errors="coerce").fillna(0.0)
+    else:
+        df_faceta["tp"] = _serie_numerica(df_faceta, "tipo")
     if "fecha_albaran" in df_faceta.columns:
         df_faceta["fecha"] = df_faceta["fecha_albaran"]
     if "albaran" in df_faceta.columns:
@@ -247,8 +279,22 @@ def analizar_faceta_v(df_compras, df_faceta):
     if "seccion_albaran" not in df_goteo.columns:
         return None
 
+    columnas_tipo_goteo = [
+        col for col in df_goteo.columns
+        if _normalizar_texto(col) in {"tipo", "tipo albaran", "tipo_albaran", "tp"}
+        or ("tipo" in _normalizar_texto(col) and "albaran" in _normalizar_texto(col))
+    ]
+    columnas_descripcion_goteo = [
+        col for col in df_goteo.columns
+        if any(token in _normalizar_texto(col) for token in ["descripcion", "categoria", "observacion"])
+        or col == "tipo_albaran_bidafarma"
+    ]
     serie_vacia_goteo = pd.Series("", index=df_goteo.index)
-    df_goteo["descripcion"] = df_goteo.get("descripcion", serie_vacia_goteo).astype(str)
+    descripcion_combinada = _combinar_columnas_texto(df_goteo, columnas_descripcion_goteo)
+    df_goteo["descripcion"] = descripcion_combinada.where(
+        descripcion_combinada.str.strip().ne(""),
+        df_goteo.get("descripcion", serie_vacia_goteo).astype(str),
+    )
     df_goteo["bruto"] = _serie_numerica(df_goteo, "bruto")
     df_goteo["neto"] = _serie_numerica(df_goteo, "neto")
     df_goteo["unidades"] = _serie_numerica(df_goteo, "unidades")
@@ -266,7 +312,7 @@ def analizar_faceta_v(df_compras, df_faceta):
     ).fillna(False).astype(bool)
 
     descripcion_normalizada = df_goteo["descripcion"].apply(_normalizar_texto)
-    tipos_normalizados = df_goteo.get("tipo", pd.Series([""] * len(df_goteo), index=df_goteo.index))
+    tipos_normalizados = _combinar_columnas_texto(df_goteo, columnas_tipo_goteo)
     mask_linea_tp74 = pd.Series(
         [
             es_linea_faceta(tipo, descripcion)

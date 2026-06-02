@@ -93,6 +93,15 @@ def _numero_decimal(valor):
         return None
 
 
+def _importe_desde_fila(row):
+    importes = []
+    for valor in row.values:
+        numero = _numero_decimal(valor)
+        if numero is not None:
+            importes.append(numero)
+    return importes[-1] if importes else None
+
+
 def _sumar_total_albaranes_factura(df):
     columnas_albaran = _columnas_albaran(df)
     columna_total = _columna_total_albaran(df)
@@ -256,13 +265,15 @@ def _extraer_albaranes_factura(df, tokens_fin_bloque):
         if len(texto) < 5:
             continue
 
+        if any(token in texto for token in tokens_fin_bloque):
+            leyendo_albaranes = False
+            if columnas:
+                break
+
         for col in columnas:
             num = extraer_numero_albaran(row.get(col))
             if _parece_numero_albaran(num):
                 albaranes.append(num)
-
-        if any(token in texto for token in tokens_fin_bloque):
-            leyendo_albaranes = False
 
         if not leyendo_albaranes and columnas:
             break
@@ -297,7 +308,7 @@ def analizar_factura_bidafarma(file):
 
     albaranes = _extraer_albaranes_factura(
         df,
-        tokens_fin_bloque=["servicio", "gestion", "avantia", "ajuste comercial"],
+        tokens_fin_bloque=["servicio", "gestion", "avantia", "ajuste comercial", "total compras", "totales", "bases"],
     )
     total_albaranes_factura = _sumar_total_albaranes_factura(df)
     if not albaranes:
@@ -312,18 +323,19 @@ def analizar_factura_bidafarma(file):
             continue
 
         texto = " ".join(valores).lower()
+        texto_normalizado = normalizar_texto(texto)
 
         if len(texto) < 5:
             continue
 
-        if any(x in texto for x in ["iva", "recargo", "total"]):
+        if "iva servicios" in texto_normalizado or "total servicios" in texto_normalizado:
             continue
 
         # IMPORTE ROBUSTO
-        importe = None
+        importe = _importe_desde_fila(row)
 
         for col in df.columns:
-            if any(x in col for x in ["importe", "total", "base"]):
+            if importe is None and any(x in col for x in ["importe", "total", "base"]):
                 try:
                     val = str(row[col]).replace(",", ".").replace("€", "").strip()
                     importe = float(val)
@@ -334,39 +346,37 @@ def analizar_factura_bidafarma(file):
         if importe is None:
             numeros = re.findall(r"-?\d+[.,]?\d*", texto)
             for num in reversed(numeros):
-                try:
-                    importe = float(num.replace(",", "."))
+                importe = _numero_decimal(num)
+                if importe is not None:
                     break
-                except:
-                    continue
 
         if importe is None:
             continue
 
         texto_limpio = limpiar_texto(texto)
 
-        if "servicio" in texto:
+        if "servicio" in texto_normalizado:
             gastos.append({
                 "tipo": "servicios",
                 "concepto": texto_limpio,
                 "importe": round(importe, 2)
             })
 
-        elif "gestion" in texto or "gestión" in texto:
+        elif "gestion" in texto_normalizado or "gesti" in texto_normalizado:
             gastos.append({
                 "tipo": "gestion",
                 "concepto": "gastos de gestión",
                 "importe": round(importe, 2)
             })
 
-        elif "avantia" in texto:
+        elif "avantia" in texto_normalizado:
             gastos.append({
                 "tipo": "avantia",
                 "concepto": "cuota avantia",
                 "importe": round(importe, 2)
             })
 
-        elif "ajuste comercial" in texto:
+        elif "ajuste comercial" in texto_normalizado:
             ajustes_comerciales.append({
                 "tipo": "ajuste_comercial",
                 "concepto": texto_limpio,
@@ -407,7 +417,7 @@ def analizar_factura_transfer(file):
 
     albaranes = _extraer_albaranes_factura(
         df,
-        tokens_fin_bloque=["log", "abono", "laboratorio"],
+        tokens_fin_bloque=["log", "abono", "laboratorio", "total compras", "totales", "bases"],
     )
     total_albaranes_factura = _sumar_total_albaranes_factura(df)
     if not albaranes:

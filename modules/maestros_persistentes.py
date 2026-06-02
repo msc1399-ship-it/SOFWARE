@@ -121,4 +121,8 @@ def eliminar_archivo(clave):
 
 
 def hay_archivo(clave):
-    return abrir_archivo(clave) is not None
+    info = obtener_metadata(clave)
+    if not info:
+        return False
+    ruta = BASE_DIR / info.get("filename", "")
+    return ruta.exists() and ruta.is_file()

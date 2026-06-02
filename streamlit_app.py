@@ -30,24 +30,26 @@ import modules.transfer_manual_mapping as transfer_manual_mapping
 import modules.maestros_persistentes as maestros_persistentes
 import modules.condition_simulator as condition_simulator
 
-bitransfer = importlib.reload(bitransfer)
-servicios = importlib.reload(servicios)
-avantia = importlib.reload(avantia)
-faceta = importlib.reload(faceta)
-condiciones_proveedor_b = importlib.reload(condiciones_proveedor_b)
-maestro_laboratorios = importlib.reload(maestro_laboratorios)
-nomenclator_aemps = importlib.reload(nomenclator_aemps)
-ventas = importlib.reload(ventas)
-reporting = importlib.reload(reporting)
-equivalencias_efg = importlib.reload(equivalencias_efg)
-ai_advisor = importlib.reload(ai_advisor)
-club_analysis = importlib.reload(club_analysis)
-distributor_analysis = importlib.reload(distributor_analysis)
-parafarmacia = importlib.reload(parafarmacia)
-bidafarma_special_orders = importlib.reload(bidafarma_special_orders)
-transfer_manual_mapping = importlib.reload(transfer_manual_mapping)
-maestros_persistentes = importlib.reload(maestros_persistentes)
-condition_simulator = importlib.reload(condition_simulator)
+DEV_RELOAD_MODULES = False
+if DEV_RELOAD_MODULES:
+    bitransfer = importlib.reload(bitransfer)
+    servicios = importlib.reload(servicios)
+    avantia = importlib.reload(avantia)
+    faceta = importlib.reload(faceta)
+    condiciones_proveedor_b = importlib.reload(condiciones_proveedor_b)
+    maestro_laboratorios = importlib.reload(maestro_laboratorios)
+    nomenclator_aemps = importlib.reload(nomenclator_aemps)
+    ventas = importlib.reload(ventas)
+    reporting = importlib.reload(reporting)
+    equivalencias_efg = importlib.reload(equivalencias_efg)
+    ai_advisor = importlib.reload(ai_advisor)
+    club_analysis = importlib.reload(club_analysis)
+    distributor_analysis = importlib.reload(distributor_analysis)
+    parafarmacia = importlib.reload(parafarmacia)
+    bidafarma_special_orders = importlib.reload(bidafarma_special_orders)
+    transfer_manual_mapping = importlib.reload(transfer_manual_mapping)
+    maestros_persistentes = importlib.reload(maestros_persistentes)
+    condition_simulator = importlib.reload(condition_simulator)
 
 try:
     APP_PASSWORD = st.secrets.get("APP_PASSWORD", "")
@@ -287,14 +289,17 @@ def _vista_compras_ligera(df):
     if df is None or df.empty:
         return df
 
+    columnas_norm = {
+        _normalizar_nombre_columna(col).replace(" ", "_"): col
+        for col in df.columns
+    }
+
     def buscar_columna(candidatas):
-        columnas_norm = {_normalizar_nombre_columna(col).replace(" ", "_"): col for col in df.columns}
         for candidata in candidatas:
             normalizada = _normalizar_nombre_columna(candidata).replace(" ", "_")
             if normalizada in columnas_norm:
                 return columnas_norm[normalizada]
-        for col in df.columns:
-            nombre = _normalizar_nombre_columna(col).replace(" ", "_")
+        for nombre, col in columnas_norm.items():
             if any(token in nombre for token in candidatas):
                 return col
         return None
@@ -364,7 +369,15 @@ def _vista_compras_ligera(df):
             columnas.append(col)
     if not columnas:
         return df
-    return df.loc[:, columnas].copy()
+    vista = df.loc[:, columnas].copy()
+    if columna_descuento_cargo in vista.columns:
+        dc = vista[columna_descuento_cargo]
+        dc_num = pd.to_numeric(dc, errors="coerce")
+        mask_pct_decimal = dc_num.notna() & dc_num.abs().gt(0) & dc_num.abs().le(1)
+        vista.loc[mask_pct_decimal, columna_descuento_cargo] = (
+            dc_num.loc[mask_pct_decimal].mul(100).round(2).astype(str).str.rstrip("0").str.rstrip(".") + "%"
+        )
+    return vista
 
 
 def _mostrar_error_procesamiento(mensaje, error=None):

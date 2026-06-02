@@ -481,15 +481,11 @@ def calcular_top_articulos_impactados(df, limite=10):
 
     trabajo = trabajo.copy()
     trabajo["coste_real_num"] = _serie_numerica(trabajo, coste_col)
-    trabajo["descuento_aparente_pct"] = trabajo.apply(
-        lambda row: _descuento_pct(row["bruto_num"], row["neto_num"]),
-        axis=1,
-    )
+    bruto = trabajo["bruto_num"].where(trabajo["bruto_num"].abs() > 0.0001)
+    trabajo["descuento_aparente_pct"] = ((1 - (trabajo["neto_num"] / bruto)) * 100).round(2)
     trabajo["diferencia_absoluta"] = (trabajo["coste_real_num"] - trabajo["neto_num"]).abs()
-    trabajo["diferencia_porcentual"] = trabajo.apply(
-        lambda row: None if abs(row["neto_num"]) <= 0.0001 else round(row["diferencia_absoluta"] / abs(row["neto_num"]) * 100, 2),
-        axis=1,
-    )
+    neto_abs = trabajo["neto_num"].abs().where(trabajo["neto_num"].abs() > 0.0001)
+    trabajo["diferencia_porcentual"] = (trabajo["diferencia_absoluta"] / neto_abs * 100).round(2)
     trabajo = trabajo.sort_values("diferencia_absoluta", ascending=False).head(limite)
     columnas = [
         "cn",
