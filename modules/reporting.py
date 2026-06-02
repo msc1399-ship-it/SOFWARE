@@ -59,15 +59,20 @@ def _cargo_faceta(analisis_faceta, bloque):
         return 0.0
 
     detalle = _df_seguro(analisis_faceta.get("detalle_tramo_fijo"))
-    if detalle.empty or "cargo_faceta_tramo_fijo" not in detalle.columns:
+    if detalle.empty:
         return 0.0
 
     resumen = analisis_faceta.get("resumen") or {}
-    cargo_unitario = float(resumen.get("cargo_unitario_tramo_fijo", 0) or 0)
-    if cargo_unitario > 0:
-        cargos = _serie_numerica(detalle, "unidades") * cargo_unitario
-    else:
-        cargos = _serie_numerica(detalle, "cargo_faceta_tramo_fijo")
+    unidades_detalle = _serie_numerica(detalle, "unidades").abs()
+    unidades_totales = float(unidades_detalle.sum())
+    cargo_total = float(resumen.get("margen_tramo_fijo_total", 0) or 0)
+    if abs(cargo_total) <= 0.0001 and "cargo_faceta_tramo_fijo" in detalle.columns:
+        cargo_total = float(_serie_numerica(detalle, "cargo_faceta_tramo_fijo").sum())
+    if unidades_totales <= 0:
+        return 0.0
+
+    cargo_unitario = cargo_total / unidades_totales
+    cargos = unidades_detalle * cargo_unitario
     if bloque == "goteo_puro":
         return float(cargos.sum())
 

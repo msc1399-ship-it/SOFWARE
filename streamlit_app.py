@@ -56,7 +56,7 @@ try:
 except Exception:
     APP_PASSWORD = ""
 MAX_UPLOAD_MB = 50
-ANALISIS_DISTRIBUIDORA_VERSION = "zv_tramo_fijo_unidades_v2"
+ANALISIS_DISTRIBUIDORA_VERSION = "zv_tramo_fijo_unidades_v3"
 
 if st.session_state.get("_analisis_distribuidora_version") != ANALISIS_DISTRIBUIDORA_VERSION:
     st.session_state.pop("analisis_distribuidora", None)
@@ -1099,6 +1099,23 @@ def _mostrar_analisis_distribuidora(analisis):
 
     especialidad_cara_resumen = analisis.get("especialidad_cara_resumen", {})
     if especialidad_cara_resumen and especialidad_cara_resumen.get("lineas_detectadas", 0) > 0:
+        st.subheader("Especialidad cara / RDL 4/2010")
+        compra_total = float(resumen.get("compra_bruta_total", 0) or 0)
+        bruto_cara = float(especialidad_cara_resumen.get("bruto_total", 0) or 0)
+        porcentaje_compra_cara = (bruto_cara / compra_total * 100) if compra_total else 0.0
+        _tarjetas_metricas([
+            {"label": "Unidades", "value": f"{especialidad_cara_resumen.get('unidades', 0):.2f}"},
+            {
+                "label": "Descuento euros",
+                "value": f"{especialidad_cara_resumen.get('descuento_total_euros', 0):.2f} €",
+            },
+            {
+                "label": "Desc. medio euros",
+                "value": f"{especialidad_cara_resumen.get('descuento_medio_linea_euros', 0):.2f} €",
+            },
+            {"label": "% compras totales", "value": f"{porcentaje_compra_cara:.2f}%"},
+        ])
+    if False and especialidad_cara_resumen and especialidad_cara_resumen.get("lineas_detectadas", 0) > 0:
         st.subheader("Especialidad cara / RDL 4/2010")
         _tarjetas_metricas([
             {"label": "Líneas", "value": especialidad_cara_resumen.get("lineas_detectadas", 0)},
@@ -2373,15 +2390,21 @@ def _cargo_faceta_por_seccion(analisis_faceta, seccion_objetivo):
         return 0.0
 
     resumen = analisis_faceta.get("resumen") or {}
-    cargo_unitario = float(resumen.get("cargo_unitario_tramo_fijo", 0) or 0)
+    unidades_detalle = _serie_numerica(detalle, "unidades").abs()
+    unidades_totales = float(unidades_detalle.sum())
+    cargo_total = float(resumen.get("margen_tramo_fijo_total", 0) or 0)
+    if abs(cargo_total) <= 0.0001 and "cargo_faceta_tramo_fijo" in detalle.columns:
+        cargo_total = float(_serie_numerica(detalle, "cargo_faceta_tramo_fijo").sum())
+    if unidades_totales <= 0:
+        return 0.0
+
+    cargo_unitario = cargo_total / unidades_totales
     seccion = detalle.get(
         "seccion_albaran",
         pd.Series("", index=detalle.index),
     ).astype(str).str.lower().str.strip()
     mask = seccion.eq(seccion_objetivo)
-    if cargo_unitario > 0:
-        return float(_serie_numerica(detalle.loc[mask], "unidades").sum() * cargo_unitario)
-    return float(_serie_numerica(detalle.loc[mask], "cargo_faceta_tramo_fijo").sum())
+    return float(_serie_numerica(detalle.loc[mask], "unidades").abs().sum() * cargo_unitario)
 
 
 def _resumen_bidafarma(
