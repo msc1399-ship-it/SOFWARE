@@ -40,6 +40,15 @@ def _normalizar_numero(valor):
         return None
 
 
+def _normalizar_porcentaje(valor):
+    numero = _normalizar_numero(valor)
+    if numero is None:
+        return None
+    if abs(numero) > 0 and abs(numero) <= 1:
+        return numero * 100
+    return numero
+
+
 def _extraer_numero_en_texto(valor):
     texto = str(valor)
     match = re.search(r"-?\d+(?:[.,]\d+)?", texto)
@@ -176,11 +185,11 @@ def leer_listado_compras_bitransfer(file):
     resultado["pvl"] = df[columnas["pvl"]].apply(_normalizar_numero)
 
     if columnas["descuento"]:
-        resultado["descuento_pct"] = df[columnas["descuento"]].apply(_normalizar_numero)
+        resultado["descuento_pct"] = df[columnas["descuento"]].apply(_normalizar_porcentaje)
     else:
         resultado["descuento_pct"] = None
 
-    resultado["cargo_pct"] = df[columnas["cargo"]].apply(_normalizar_numero)
+    resultado["cargo_pct"] = df[columnas["cargo"]].apply(_normalizar_porcentaje)
     resultado["importe_neto"] = df[columnas["importe_neto"]].apply(_normalizar_numero)
 
     resultado = resultado.dropna(subset=["cn", "descripcion", "pvl", "cargo_pct", "importe_neto"])
@@ -237,11 +246,11 @@ def leer_cuadro_resumen_consumos(file):
                 "venta_bruta": _normalizar_numero(_valor_fila(fila, encabezados, "venta_bruta")),
                 "pva": _normalizar_numero(_valor_fila(fila, encabezados, "pva")),
                 "pvl": _normalizar_numero(_valor_fila(fila, encabezados, "pvl")),
-                "descuento_pct": _normalizar_numero(_valor_fila(fila, encabezados, "descuento_pct")),
+                "descuento_pct": _normalizar_porcentaje(_valor_fila(fila, encabezados, "descuento_pct")),
                 "descuento_eur": _normalizar_numero(_valor_fila(fila, encabezados, "descuento_eur")),
-                "cargo_pct": _normalizar_numero(_valor_fila(fila, encabezados, "cargo_pct")),
+                "cargo_pct": _normalizar_porcentaje(_valor_fila(fila, encabezados, "cargo_pct")),
                 "cargo_eur": _normalizar_numero(_valor_fila(fila, encabezados, "cargo_eur")),
-                "rentabilidad_pct": _normalizar_numero(_valor_fila(fila, encabezados, "rentabilidad_pct")),
+                "rentabilidad_pct": _normalizar_porcentaje(_valor_fila(fila, encabezados, "rentabilidad_pct")),
             })
 
         elif bloque == "plataforma":
@@ -254,11 +263,11 @@ def leer_cuadro_resumen_consumos(file):
                 "venta_bruta": _normalizar_numero(_valor_fila(fila, encabezados, "venta_bruta")),
                 "pva": _normalizar_numero(_valor_fila(fila, encabezados, "pva")),
                 "pvl": _normalizar_numero(_valor_fila(fila, encabezados, "pvl")),
-                "descuento_pct": _normalizar_numero(_valor_fila(fila, encabezados, "descuento_pct")),
+                "descuento_pct": _normalizar_porcentaje(_valor_fila(fila, encabezados, "descuento_pct")),
                 "descuento_eur": _normalizar_numero(_valor_fila(fila, encabezados, "descuento_eur")),
-                "cargo_pct": _normalizar_numero(_valor_fila(fila, encabezados, "cargo_pct")),
+                "cargo_pct": _normalizar_porcentaje(_valor_fila(fila, encabezados, "cargo_pct")),
                 "cargo_eur": _normalizar_numero(_valor_fila(fila, encabezados, "cargo_eur")),
-                "rentabilidad_pct": _normalizar_numero(_valor_fila(fila, encabezados, "rentabilidad_pct")),
+                "rentabilidad_pct": _normalizar_porcentaje(_valor_fila(fila, encabezados, "rentabilidad_pct")),
                 "cuota": None,
             })
             ultima_plataforma = len(plataformas) - 1

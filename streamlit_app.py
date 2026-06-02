@@ -1753,6 +1753,27 @@ def _calcular_gastos_plataformas(resumen_consumos):
     return round(float(total), 2)
 
 
+def _hay_lineas_bitransfer(df):
+    if df is None or df.empty:
+        return False
+
+    columnas_texto = [
+        col for col in df.columns
+        if any(
+            token in _normalizar_nombre_columna(col)
+            for token in ["seccion", "categoria", "tipo", "descripcion", "observacion", "descuento", "cargo", "d/c", "dc"]
+        )
+    ]
+    if not columnas_texto:
+        return False
+
+    patron = r"bitransfer|bittransfer|bitrasnfer"
+    for columna in columnas_texto:
+        if df[columna].astype(str).str.lower().str.contains(patron, na=False).any():
+            return True
+    return False
+
+
 def _normalizar_texto_match(valor):
     if pd.isna(valor):
         return ""
@@ -3228,9 +3249,7 @@ def render_vida_pharma():
             # BITRANSFER
             df_bida = df[df["proveedor"] == "bidafarma"]
 
-            hay_bitransfer = False
-            if "seccion_albaran" in df_bida.columns:
-                hay_bitransfer = (df_bida["seccion_albaran"] == "bitransfer").any()
+            hay_bitransfer = _hay_lineas_bitransfer(df_bida)
 
             hay_gestion = False
             if resultado and not resultado["gastos"].empty:
