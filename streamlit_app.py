@@ -2353,6 +2353,25 @@ def _detectar_penalizacion_bajo_consumo(condicion, diferencia_gestion):
     }
 
 
+def _cargo_faceta_por_seccion(analisis_faceta, seccion_objetivo):
+    if not analisis_faceta:
+        return 0.0
+    detalle = analisis_faceta.get("detalle_tramo_fijo")
+    if detalle is None or detalle.empty:
+        return 0.0
+
+    resumen = analisis_faceta.get("resumen") or {}
+    cargo_unitario = float(resumen.get("cargo_unitario_tramo_fijo", 0) or 0)
+    seccion = detalle.get(
+        "seccion_albaran",
+        pd.Series("", index=detalle.index),
+    ).astype(str).str.lower().str.strip()
+    mask = seccion.eq(seccion_objetivo)
+    if cargo_unitario > 0:
+        return float(_serie_numerica(detalle.loc[mask], "unidades").sum() * cargo_unitario)
+    return float(_serie_numerica(detalle.loc[mask], "cargo_faceta_tramo_fijo").sum())
+
+
 def _resumen_bidafarma(
     df,
     analisis_faceta=None,
@@ -2518,11 +2537,7 @@ def _resumen_bidafarma(
         "Especialidad normal",
         mask_especialidad_normal,
         coste_extra=(
-            (0.0 if not analisis_faceta else float(
-                analisis_faceta["detalle_tramo_fijo"]
-                .loc[analisis_faceta["detalle_tramo_fijo"]["seccion_albaran"] == "especialidad", "cargo_faceta_tramo_fijo"]
-                .sum()
-            ))
+            _cargo_faceta_por_seccion(analisis_faceta, "especialidad")
             + (0.0 if not analisis_cargo_adicional else float(
                 analisis_cargo_adicional["detalle"]
                 .loc[analisis_cargo_adicional["detalle"]["seccion_albaran"] == "especialidad", "cargo_gestion_adicional"]
@@ -2537,11 +2552,7 @@ def _resumen_bidafarma(
         "Parafarmacia normal",
         mask_goteo_puro & seccion_norm.eq("parafarmacia"),
         coste_extra=(
-            (0.0 if not analisis_faceta else float(
-                analisis_faceta["detalle_tramo_fijo"]
-                .loc[analisis_faceta["detalle_tramo_fijo"]["seccion_albaran"] == "parafarmacia", "cargo_faceta_tramo_fijo"]
-                .sum()
-            ))
+            _cargo_faceta_por_seccion(analisis_faceta, "parafarmacia")
             + (0.0 if not analisis_cargo_adicional else float(
                 analisis_cargo_adicional["detalle"]
                 .loc[analisis_cargo_adicional["detalle"]["seccion_albaran"] == "parafarmacia", "cargo_gestion_adicional"]

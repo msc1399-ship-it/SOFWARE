@@ -157,15 +157,20 @@ def _cargo_faceta(analisis_faceta, bloque):
     if detalle.empty or "cargo_faceta_tramo_fijo" not in detalle.columns:
         return 0.0
 
-    cargos = _serie_numerica(detalle, "cargo_faceta_tramo_fijo")
+    resumen = analisis_faceta.get("resumen") or {}
+    cargo_unitario = float(resumen.get("cargo_unitario_tramo_fijo", 0) or 0)
+    if cargo_unitario > 0:
+        cargos = _serie_numerica(detalle, "unidades") * cargo_unitario
+    else:
+        cargos = _serie_numerica(detalle, "cargo_faceta_tramo_fijo")
     if bloque == "goteo_puro":
         return float(cargos.sum())
 
-    seccion = detalle.get("seccion_albaran", pd.Series("", index=detalle.index)).astype(str).str.lower().str.strip()
+    bloque_detalle = _clasificar_bloques(detalle)
     if bloque == "especialidad":
-        return float(cargos[seccion.eq("especialidad")].sum())
+        return float(cargos[bloque_detalle.eq("especialidad")].sum())
     if bloque == "parafarmacia":
-        return float(cargos[seccion.eq("parafarmacia")].sum())
+        return float(cargos[bloque_detalle.eq("parafarmacia")].sum())
     return 0.0
 
 

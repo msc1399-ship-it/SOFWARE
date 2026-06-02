@@ -334,15 +334,13 @@ def analizar_faceta_v(df_compras, df_faceta):
         ],
         index=df_goteo.index,
     )
-    es_especialidad_cara_texto = texto_clasificacion.str.contains("especialidad cara", na=False)
-    es_parafarmacia_financiada_texto = texto_clasificacion.str.contains("parafarmacia financiada", na=False)
     es_club = texto_clasificacion.str.contains("club", na=False)
     es_bitransfer = texto_clasificacion.str.contains("bitransfer|bittransfer|bitrasnfer", na=False)
     es_avantia = texto_clasificacion.str.contains("avantia", na=False)
     es_bidanatural = texto_clasificacion.str.contains("bidanatural|vida natural|vidanatural", na=False)
     es_plataforma = texto_clasificacion.str.contains("plataforma|nexo", na=False)
-    es_especialidad_cara = _serie_bool(df_goteo, "es_especialidad_cara") | es_especialidad_cara_texto
-    es_parafarmacia_financiada = _serie_bool(df_goteo, "es_parafarmacia_financiada") | es_parafarmacia_financiada_texto
+    es_especialidad_cara = _serie_bool(df_goteo, "es_especialidad_cara")
+    es_parafarmacia_financiada = _serie_bool(df_goteo, "es_parafarmacia_financiada")
     es_pedido_especial = _serie_bool(df_goteo, "es_pedido_especial_bidafarma")
     mask_excluir_condiciones_generales = (
         es_especialidad_cara
