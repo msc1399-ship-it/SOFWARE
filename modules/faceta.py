@@ -222,6 +222,12 @@ def _combinar_columnas_texto(df, columnas):
     return combinado
 
 
+def _serie_bool(df, columna):
+    if columna not in df.columns:
+        return pd.Series(False, index=df.index)
+    return df[columna].fillna(False).astype(bool)
+
+
 def extraer_faceta_desde_lineas(df_compras):
     if df_compras is None or df_compras.empty:
         return pd.DataFrame()
@@ -298,21 +304,29 @@ def analizar_faceta_v(df_compras, df_faceta):
     df_goteo["bruto"] = _serie_numerica(df_goteo, "bruto")
     df_goteo["neto"] = _serie_numerica(df_goteo, "neto")
     df_goteo["unidades"] = _serie_numerica(df_goteo, "unidades")
-    no_especialidad_cara = ~df_goteo.get(
-        "es_especialidad_cara",
-        pd.Series(False, index=df_goteo.index),
-    ).fillna(False).astype(bool)
-    no_parafarmacia_financiada = ~df_goteo.get(
-        "es_parafarmacia_financiada",
-        pd.Series(False, index=df_goteo.index),
-    ).fillna(False).astype(bool)
-    no_pedido_especial_bidafarma = ~df_goteo.get(
-        "es_pedido_especial_bidafarma",
-        pd.Series(False, index=df_goteo.index),
-    ).fillna(False).astype(bool)
-
     descripcion_normalizada = df_goteo["descripcion"].apply(_normalizar_texto)
     tipos_normalizados = _combinar_columnas_texto(df_goteo, columnas_tipo_goteo)
+    columnas_clasificacion = [
+        col for col in df_goteo.columns
+        if any(
+            token in _normalizar_texto(col)
+            for token in [
+                "descripcion",
+                "categoria",
+                "seccion",
+                "tipo_compra",
+                "observacion",
+                "descuento",
+                "cargo",
+                "d/c",
+                "dc",
+                "pvp",
+            ]
+        )
+        or col in {"tipo_albaran_bidafarma", "categoria_pedido_especial_bidafarma"}
+    ]
+    texto_clasificacion = _combinar_columnas_texto(df_goteo, columnas_clasificacion).apply(_normalizar_texto)
+    seccion_normalizada = df_goteo["seccion_albaran"].astype(str).apply(_normalizar_texto)
     mask_linea_tp74 = pd.Series(
         [
             es_linea_faceta(tipo, descripcion)
@@ -320,17 +334,39 @@ def analizar_faceta_v(df_compras, df_faceta):
         ],
         index=df_goteo.index,
     )
+    es_especialidad_cara_texto = texto_clasificacion.str.contains("especialidad cara", na=False)
+    es_parafarmacia_financiada_texto = texto_clasificacion.str.contains("parafarmacia financiada", na=False)
+    es_club = texto_clasificacion.str.contains("club", na=False)
+    es_bitransfer = texto_clasificacion.str.contains("bitransfer|bittransfer|bitrasnfer", na=False)
+    es_avantia = texto_clasificacion.str.contains("avantia", na=False)
+    es_bidanatural = texto_clasificacion.str.contains("bidanatural|vida natural|vidanatural", na=False)
+    es_plataforma = texto_clasificacion.str.contains("plataforma|nexo", na=False)
+    es_especialidad_cara = _serie_bool(df_goteo, "es_especialidad_cara") | es_especialidad_cara_texto
+    es_parafarmacia_financiada = _serie_bool(df_goteo, "es_parafarmacia_financiada") | es_parafarmacia_financiada_texto
+    es_pedido_especial = _serie_bool(df_goteo, "es_pedido_especial_bidafarma")
+    mask_excluir_condiciones_generales = (
+        es_especialidad_cara
+        | es_parafarmacia_financiada
+        | es_pedido_especial
+        | es_club
+        | es_bitransfer
+        | es_avantia
+        | es_bidanatural
+        | es_plataforma
+        | mask_linea_tp74
+    )
+    mask_especialidad_normal = seccion_normalizada.eq("especialidad") & ~es_especialidad_cara
+    mask_parafarmacia_no_financiada = (
+        seccion_normalizada.eq("parafarmacia")
+        & ~es_parafarmacia_financiada
+        & texto_clasificacion.str.contains("parafarmacia", na=False)
+    )
+    mask_elegible_tramo_fijo = mask_especialidad_normal | mask_parafarmacia_no_financiada
 
     mask_tramo_fijo = (
-        df_goteo["seccion_albaran"].isin(["especialidad", "parafarmacia"])
+        mask_elegible_tramo_fijo
         & df_goteo["neto"].gt(0)
-        & no_especialidad_cara
-        & no_parafarmacia_financiada
-        & no_pedido_especial_bidafarma
-        & ~mask_linea_tp74
-        & ~descripcion_normalizada.str.contains("club", na=False)
-        & ~descripcion_normalizada.str.contains("bitransfer|bittransfer", na=False)
-        & ~descripcion_normalizada.str.contains("avantia", na=False)
+        & ~mask_excluir_condiciones_generales
     )
 
     tramo_fijo = df_goteo[mask_tramo_fijo].copy()
@@ -342,10 +378,15 @@ def analizar_faceta_v(df_compras, df_faceta):
     margen_tramo_fijo_total = round(float(cargos_tarifa["importe"].sum()), 4)
 
     base_aplicacion_tramo_fijo = float(tramo_fijo["bruto"].abs().sum()) if not tramo_fijo.empty else 0.0
+    unidades_aplicacion_tramo_fijo = float(tramo_fijo["unidades"].abs().sum()) if not tramo_fijo.empty else 0.0
     base_tramo_fijo = margen_tramo_fijo_total * 0.076
 
     if not tramo_fijo.empty:
-        if base_aplicacion_tramo_fijo > 0:
+        if unidades_aplicacion_tramo_fijo > 0:
+            tramo_fijo["cargo_faceta_tramo_fijo"] = (
+                tramo_fijo["unidades"].abs() / unidades_aplicacion_tramo_fijo
+            ) * margen_tramo_fijo_total
+        elif base_aplicacion_tramo_fijo > 0:
             tramo_fijo["cargo_faceta_tramo_fijo"] = (
                 tramo_fijo["bruto"].abs() / base_aplicacion_tramo_fijo
             ) * margen_tramo_fijo_total
@@ -427,6 +468,8 @@ def analizar_faceta_v(df_compras, df_faceta):
             "margen_tramo_fijo_total": round(margen_tramo_fijo_total, 2),
             "base_tramo_fijo": round(base_tramo_fijo, 2),
             "base_aplicacion": round(base_aplicacion_tramo_fijo, 2),
+            "unidades_aplicacion": round(unidades_aplicacion_tramo_fijo, 2),
+            "cargo_unitario_tramo_fijo": round(margen_tramo_fijo_total / unidades_aplicacion_tramo_fijo, 4) if unidades_aplicacion_tramo_fijo else 0.0,
             "lineas_tramo_fijo": 0 if tramo_fijo.empty else len(tramo_fijo),
             "liquidaciones_total": round(float(liquidaciones["importe"].sum()), 2) if not liquidaciones.empty else 0.0,
             "lineas_liquidaciones": 0 if detalle_liquidaciones_df.empty else len(detalle_liquidaciones_df),

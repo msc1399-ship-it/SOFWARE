@@ -901,12 +901,8 @@ def _mostrar_vistas_albaranes(df):
         titulo = "📦 Goteo" if tipo == "goteo" else "🚚 Transfer"
         st.header(f"{titulo}")
 
-        if "tipo" in df_tipo.columns:
-            mask_faceta = df_tipo.apply(
-                lambda row: faceta.es_linea_faceta(row.get("tipo"), row.get("descripcion")),
-                axis=1,
-            )
-            df_tipo = df_tipo[~mask_faceta].copy()
+        mask_faceta = _mask_lineas_faceta_en_df(df_tipo)
+        df_tipo = df_tipo[~mask_faceta].copy()
 
         df_tipo["bruto"] = pd.to_numeric(df_tipo["bruto"], errors="coerce").fillna(0.0)
         df_tipo["neto"] = pd.to_numeric(df_tipo["neto"], errors="coerce").fillna(0.0)
@@ -918,6 +914,8 @@ def _mostrar_vistas_albaranes(df):
         total_abonos = abonos["neto"].sum()
 
         descuento = (total_bruto - total_neto) / total_bruto * 100 if total_bruto else 0
+        descuentos_dc = _serie_porcentaje_descuento_cargo(df_tipo)
+        descuento_dc_medio = float(descuentos_dc.mean()) if not descuentos_dc.empty else None
 
         bases_iva = _calcular_bases_iva_albaranes(df_tipo)
         _tarjetas_metricas([
@@ -925,7 +923,8 @@ def _mostrar_vistas_albaranes(df):
             {"label": "Unidades", "value": int(df_tipo["unidades"].sum())},
             {"label": "Bruto", "value": f"{total_bruto:.1f} €"},
             {"label": "Neto", "value": f"{total_neto:.1f} €"},
-            {"label": "Desc %", "value": f"{descuento:.2f}%"},
+            {"label": "Desc econ.", "value": f"{descuento:.2f}%"},
+            {"label": "Media D/C", "value": "-" if descuento_dc_medio is None else f"{descuento_dc_medio:.2f}%"},
             {"label": "Abonos", "value": f"{abs(total_abonos):.1f} €"},
             {"label": "Base IVA 4%", "value": f"{bases_iva['base_iva_4']:.2f} €"},
             {"label": "Base IVA 10%", "value": f"{bases_iva['base_iva_10']:.2f} €"},
@@ -1772,6 +1771,79 @@ def _hay_lineas_bitransfer(df):
         if df[columna].astype(str).str.lower().str.contains(patron, na=False).any():
             return True
     return False
+
+
+def _buscar_columna_descuento_cargo(df):
+    if df is None or df.empty:
+        return None
+    candidatas = [
+        "d/c",
+        "dc",
+        "descuento cargo",
+        "descuento_cargo",
+        "dto cargo",
+        "dto/cargo",
+    ]
+    columnas_norm = {
+        _normalizar_nombre_columna(col).replace(" ", "_"): col
+        for col in df.columns
+    }
+    for candidata in candidatas:
+        normalizada = _normalizar_nombre_columna(candidata).replace(" ", "_")
+        if normalizada in columnas_norm:
+            return columnas_norm[normalizada]
+    for nombre, col in columnas_norm.items():
+        if any(token in nombre for token in ["d/c", "descuento_cargo", "dto_cargo", "dto/cargo"]):
+            return col
+    return None
+
+
+def _serie_porcentaje_descuento_cargo(df):
+    columna = _buscar_columna_descuento_cargo(df)
+    if columna is None:
+        return pd.Series(dtype="float64")
+    serie = df[columna]
+    if pd.api.types.is_numeric_dtype(serie):
+        numeros = pd.to_numeric(serie, errors="coerce")
+    else:
+        texto = (
+            serie.astype(str)
+            .str.replace("%", "", regex=False)
+            .str.replace("â‚¬", "", regex=False)
+            .str.replace("EUR", "", regex=False)
+            .str.replace(" ", "", regex=False)
+            .str.strip()
+        )
+        texto = texto.str.replace(r"\.(?=\d{3}(?:\D|$))", "", regex=True)
+        texto = texto.str.replace(",", ".", regex=False)
+        numeros = pd.to_numeric(texto, errors="coerce")
+    numeros = numeros.dropna()
+    numeros = numeros.where(numeros.abs().gt(1), numeros * 100)
+    return numeros
+
+
+def _mask_lineas_faceta_en_df(df):
+    if df is None or df.empty:
+        return pd.Series(False, index=df.index if df is not None else None)
+    columnas_tipo = [
+        col for col in df.columns
+        if "tipo" in _normalizar_nombre_columna(col) and "albar" in _normalizar_nombre_columna(col)
+        or _normalizar_nombre_columna(col) in {"tipo", "tp"}
+    ]
+    columnas_desc = [
+        col for col in df.columns
+        if any(token in _normalizar_nombre_columna(col) for token in ["descripcion", "categoria", "observacion"])
+    ]
+    tipo_texto = pd.Series("", index=df.index)
+    desc_texto = pd.Series("", index=df.index)
+    for columna in columnas_tipo:
+        tipo_texto = tipo_texto + " " + df[columna].fillna("").astype(str)
+    for columna in columnas_desc:
+        desc_texto = desc_texto + " " + df[columna].fillna("").astype(str)
+    return pd.Series(
+        [faceta.es_linea_faceta(tipo, desc) for tipo, desc in zip(tipo_texto, desc_texto)],
+        index=df.index,
+    )
 
 
 def _normalizar_texto_match(valor):
