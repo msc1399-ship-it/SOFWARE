@@ -1883,10 +1883,26 @@ def _mask_lineas_faceta_en_df(df):
         tipo_texto = tipo_texto + " " + df[columna].fillna("").astype(str)
     for columna in columnas_desc:
         desc_texto = desc_texto + " " + df[columna].fillna("").astype(str)
-    return pd.Series(
+    mask_faceta = pd.Series(
         [faceta.es_linea_faceta(tipo, desc) for tipo, desc in zip(tipo_texto, desc_texto)],
         index=df.index,
     )
+    texto_fila = pd.Series("", index=df.index)
+    for columna in df.columns:
+        nombre = _normalizar_nombre_columna(columna)
+        if any(token in nombre for token in ["descripcion", "categoria", "concepto", "observacion", "tipo"]):
+            texto_fila = texto_fila + " " + df[columna].fillna("").astype(str)
+    texto_fila = texto_fila.map(_normalizar_texto_match)
+    tipo_normalizado = tipo_texto.map(_normalizar_texto_match)
+    mask_concepto_tecnico = texto_fila.str.contains(
+        r"margen tramo fijo|tramo fijo|tramo 0|tramo cero|ajuste escala|ajuste de escala|albaran 74|liquidacion",
+        na=False,
+    )
+    mask_liquidacion_tipo_tecnico = (
+        tipo_normalizado.str.contains(r"\b(?:74|84|tt|tx)\b", na=False)
+        & texto_fila.str.contains("liquidacion", na=False)
+    )
+    return mask_faceta | mask_concepto_tecnico | mask_liquidacion_tipo_tecnico
 
 
 def _normalizar_texto_match(valor):
