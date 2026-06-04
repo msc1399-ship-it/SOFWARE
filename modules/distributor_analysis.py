@@ -364,6 +364,7 @@ def calcular_gastos_ocultos(
 ):
     filas = []
     bruto_total = float(_serie_numerica(_df_seguro(df_compras), "bruto").sum()) if df_compras is not None else 0.0
+    gestion_factura_normal = 0.0
 
     def agregar(tipo, importe, origen, proveedor=None, segmento=None, base_segmento=None):
         importe = float(importe or 0)
@@ -383,7 +384,12 @@ def calcular_gastos_ocultos(
         gastos = _df_seguro((resultado or {}).get("gastos"))
         if not gastos.empty and "tipo" in gastos.columns and "importe" in gastos.columns:
             for tipo, grupo in gastos.groupby("tipo"):
-                agregar(str(tipo), _serie_numerica(grupo, "importe").sum(), origen)
+                tipo_txt = str(tipo).lower().strip()
+                importe_tipo = _serie_numerica(grupo, "importe").sum()
+                if origen == "factura_normal" and tipo_txt == "gestion":
+                    gestion_factura_normal += float(importe_tipo or 0)
+                    continue
+                agregar(str(tipo), importe_tipo, origen)
 
     abonos_transfer = _df_seguro((resultado_factura_transfer or {}).get("abonos"))
     if not abonos_transfer.empty and "importe" in abonos_transfer.columns:
@@ -400,6 +406,18 @@ def calcular_gastos_ocultos(
 
     if resumen_bitransfer:
         agregar("gestion_bitransfer", resumen_bitransfer.get("cargo_resumen", 0), "bitransfer", segmento="bitransfer")
+
+    gestion_explicada = 0.0
+    if resumen_bitransfer:
+        gestion_explicada += float(resumen_bitransfer.get("cargo_resumen", 0) or 0)
+    if analisis_avantia:
+        gestion_explicada += float((analisis_avantia.get("resumen") or {}).get("cargo_total", 0) or 0)
+    if abs(gestion_factura_normal) > 0.0001:
+        diferencia_gestion = gestion_factura_normal - gestion_explicada
+        if abs(gestion_explicada) <= 0.0001:
+            agregar("gestion_factura", gestion_factura_normal, "factura_normal", segmento="gestion")
+        elif abs(diferencia_gestion) > 0.05:
+            agregar("gestion_no_identificada", diferencia_gestion, "factura_normal", segmento="gestion")
 
     if analisis_transfer:
         agregar("logistica_transfer", (analisis_transfer.get("resumen") or {}).get("cargo_total", 0), "factura_transfer", segmento="transfer")

@@ -253,13 +253,18 @@ def calcular_resumen_cargos(
     analisis_transfer=None,
 ):
     filas = []
+    gestion_factura_normal = 0.0
 
     gastos_normal = _df_seguro((resultado_factura_normal or {}).get("gastos"))
     if not gastos_normal.empty and "tipo" in gastos_normal.columns and "importe" in gastos_normal.columns:
         for tipo, grupo in gastos_normal.groupby("tipo"):
+            importe_tipo = float(_serie_numerica(grupo, "importe").sum())
+            if str(tipo).lower().strip() == "gestion":
+                gestion_factura_normal += importe_tipo
+                continue
             filas.append({
                 "tipo": tipo,
-                "importe": round(float(_serie_numerica(grupo, "importe").sum()), 2),
+                "importe": round(importe_tipo, 2),
                 "origen": "factura_normal",
             })
 
@@ -300,6 +305,26 @@ def calcular_resumen_cargos(
             "importe": float(resumen_bitransfer.get("cargo_resumen", 0) or 0),
             "origen": "bitransfer",
         })
+
+    gestion_explicada = 0.0
+    if resumen_bitransfer:
+        gestion_explicada += float(resumen_bitransfer.get("cargo_resumen", 0) or 0)
+    if analisis_avantia:
+        gestion_explicada += float(analisis_avantia.get("resumen", {}).get("cargo_total", 0) or 0)
+    if abs(gestion_factura_normal) > 0.0001:
+        diferencia_gestion = gestion_factura_normal - gestion_explicada
+        if abs(gestion_explicada) <= 0.0001:
+            filas.append({
+                "tipo": "gestion_factura",
+                "importe": round(float(gestion_factura_normal), 2),
+                "origen": "factura_normal",
+            })
+        elif abs(diferencia_gestion) > 0.05:
+            filas.append({
+                "tipo": "gestion_no_identificada",
+                "importe": round(float(diferencia_gestion), 2),
+                "origen": "factura_normal",
+            })
 
     if analisis_transfer:
         filas.append({
