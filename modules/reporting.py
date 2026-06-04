@@ -106,13 +106,28 @@ def _clasificar_bloque(df):
     seccion = df.get("seccion_albaran", pd.Series("", index=df.index)).astype(str).str.lower().str.strip()
     tipo_compra = df.get("tipo_compra", pd.Series("", index=df.index)).astype(str).str.lower().str.strip()
     descripcion = df.get("descripcion", pd.Series("", index=df.index)).astype(str).str.lower()
+    texto_clasificacion = pd.Series("", index=df.index, dtype="object")
+    for columna in df.columns:
+        nombre = str(columna).lower().strip()
+        if any(token in nombre for token in ["categoria", "categor", "descuento", "cargo", "dc", "d/c", "observacion", "tipo"]):
+            texto_clasificacion = texto_clasificacion + " " + df[columna].astype(str).str.lower()
     especialidad_cara = df.get("es_especialidad_cara", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    mask_bitransfer = (
+        seccion.eq("bitransfer")
+        | descripcion.str.contains("bitransfer|bittransfer|bitrasnfer", na=False)
+        | texto_clasificacion.str.contains("bitransfer|bittransfer|bitrasnfer", na=False)
+    )
+    mask_club = (
+        seccion.eq("club")
+        | descripcion.str.contains("club", na=False)
+        | texto_clasificacion.str.contains("club", na=False)
+    )
 
     bloque = pd.Series("otros", index=df.index, dtype="object")
     bloque[tipo_compra.eq("transfer")] = "transfer"
-    bloque[seccion.eq("bitransfer") | descripcion.str.contains("bitransfer|bittransfer", na=False)] = "bitransfer"
+    bloque[mask_bitransfer] = "bitransfer"
     bloque[descripcion.str.contains("plataforma", na=False)] = "plataforma"
-    bloque[seccion.eq("club") | descripcion.str.contains("club", na=False)] = "clubes"
+    bloque[mask_club] = "clubes"
     bloque[seccion.eq("avantia") | descripcion.str.contains("avantia", na=False)] = "avantia"
     bloque[descripcion.str.contains("nexo", na=False)] = "nexo"
     bloque[tipo_compra.eq("goteo") & seccion.eq("parafarmacia")] = "parafarmacia"
@@ -127,11 +142,15 @@ def _clasificar_bloque(df):
         & seccion.isin(["especialidad", "parafarmacia"])
         & ~especialidad_cara
         & ~seccion.isin(["club", "avantia", "bitransfer"])
-        & ~descripcion.str.contains("club|avantia|bitransfer|bittransfer|nexo", na=False)
+        & ~mask_club
+        & ~mask_bitransfer
+        & ~descripcion.str.contains("club|avantia|bitransfer|bittransfer|bitrasnfer|nexo", na=False)
     )
     bloque[goteo_normal] = "goteo_puro"
     bloque[goteo_normal & seccion.eq("especialidad")] = "especialidad"
     bloque[goteo_normal & seccion.eq("parafarmacia")] = "parafarmacia"
+    bloque[mask_club] = "clubes"
+    bloque[mask_bitransfer] = "bitransfer"
     return bloque
 
 

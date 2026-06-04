@@ -289,13 +289,18 @@ def conciliar_bitransfer_consumos(df_compras, resumen_consumos):
         raise ValueError("El cuadro resumen no contiene bloque BitTransfer.")
 
     df_compras["cantidad"] = df_compras["cantidad"].fillna(1)
-    df_compras["importe_neto_unitario"] = df_compras["importe_neto"]
+    df_compras.loc[df_compras["cantidad"] <= 0, "cantidad"] = 1
+    df_compras["importe_neto_total"] = df_compras["importe_neto"]
+    df_compras["importe_neto_unitario"] = df_compras["importe_neto_total"] / df_compras["cantidad"]
     df_compras["venta_bruta"] = df_compras["pvl"] * df_compras["cantidad"]
     df_compras["cargo_teorico_unitario"] = df_compras["pvl"] * (df_compras["cargo_pct"].fillna(0) / 100)
     df_compras["coste_real_unitario"] = (
         df_compras["importe_neto_unitario"] + df_compras["cargo_teorico_unitario"]
     )
-    df_compras["coste_real_total"] = df_compras["coste_real_unitario"] * df_compras["cantidad"]
+    df_compras["coste_real_total"] = (
+        df_compras["importe_neto_total"]
+        + (df_compras["cargo_teorico_unitario"] * df_compras["cantidad"])
+    )
 
     total_compras = round(df_compras["venta_bruta"].sum(), 2)
     total_resumen = df_resumen[df_resumen["tipo"] == "subtotal"]["venta_bruta"].dropna()
@@ -338,7 +343,7 @@ def conciliar_bitransfer_consumos(df_compras, resumen_consumos):
         "cargo_resumen": round(float(cargo_resumen), 2),
         "cargo_teorico_compras": round(float(cargo_teorico_total), 2),
         "diferencia_cargo": round(float(cargo_teorico_total - cargo_resumen), 2),
-        "importe_neto_compras": round(float((df_compras["importe_neto_unitario"] * df_compras["cantidad"]).sum()), 2),
+        "importe_neto_compras": round(float(df_compras["importe_neto_total"].sum()), 2),
         "coste_real_total_compras": round(float(df_compras["coste_real_total"].sum()), 2),
     }
 
