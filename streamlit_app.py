@@ -56,7 +56,7 @@ try:
 except Exception:
     APP_PASSWORD = ""
 MAX_UPLOAD_MB = 50
-ANALISIS_DISTRIBUIDORA_VERSION = "zv_tramo_fijo_unidades_v3"
+ANALISIS_DISTRIBUIDORA_VERSION = "zv_tramo_fijo_unidades_v4"
 
 if st.session_state.get("_analisis_distribuidora_version") != ANALISIS_DISTRIBUIDORA_VERSION:
     st.session_state.pop("analisis_distribuidora", None)

@@ -205,6 +205,29 @@ def _cargo_extra_por_bloque(
     return cargo
 
 
+def _cargo_total_faceta(analisis_faceta):
+    if not analisis_faceta:
+        return 0.0
+    resumen = analisis_faceta.get("resumen") or {}
+    cargo_total = float(resumen.get("margen_tramo_fijo_total", 0) or 0)
+    if abs(cargo_total) > 0.0001:
+        return cargo_total
+
+    detalle = _df_seguro(analisis_faceta.get("detalle_tramo_fijo"))
+    if not detalle.empty and "cargo_faceta_tramo_fijo" in detalle.columns:
+        return float(_serie_numerica(detalle, "cargo_faceta_tramo_fijo").sum())
+    return 0.0
+
+
+def _cargo_faceta_por_unidades(analisis_faceta, unidades_bloque, unidades_elegibles):
+    cargo_total = _cargo_total_faceta(analisis_faceta)
+    unidades_bloque = abs(float(unidades_bloque or 0))
+    unidades_elegibles = abs(float(unidades_elegibles or 0))
+    if abs(cargo_total) <= 0.0001 or unidades_bloque <= 0 or unidades_elegibles <= 0:
+        return 0.0
+    return cargo_total * (unidades_bloque / unidades_elegibles)
+
+
 def _base_trabajo(df):
     trabajo = _df_sin_lineas_tecnicas(df)
     if trabajo.empty:
@@ -216,6 +239,12 @@ def _base_trabajo(df):
     trabajo["unidades_num"] = _serie_numerica(trabajo, "unidades")
     trabajo["es_abono"] = trabajo["neto_num"].lt(0)
     return trabajo
+
+
+def _mask_goteo_puro(trabajo):
+    if trabajo is None or trabajo.empty or "bloque_analisis" not in trabajo.columns:
+        return pd.Series(False, index=trabajo.index if trabajo is not None else None, dtype=bool)
+    return trabajo["bloque_analisis"].isin(["especialidad", "parafarmacia"])
 
 
 def _solo_compras(trabajo):
@@ -243,7 +272,10 @@ def calcular_volumen_compra(df):
     }
 
     for tipo in TIPOS_ANALISIS:
-        parte = trabajo[trabajo["bloque_analisis"].eq(tipo)] if not trabajo.empty else pd.DataFrame()
+        if not trabajo.empty and tipo == "goteo_puro":
+            parte = trabajo[_mask_goteo_puro(trabajo)]
+        else:
+            parte = trabajo[trabajo["bloque_analisis"].eq(tipo)] if not trabajo.empty else pd.DataFrame()
         bruto = float(parte["bruto_num"].sum()) if not parte.empty else 0.0
         volumen[tipo] = {
             "bruto": round(bruto, 2),
@@ -264,13 +296,31 @@ def calcular_desglose_por_tipo(
     trabajo = _base_trabajo(df)
     filas = []
     bruto_total = float(trabajo["bruto_num"].sum()) if not trabajo.empty else 0.0
+    mask_goteo = _mask_goteo_puro(trabajo)
+    unidades_goteo_elegibles = (
+        float(trabajo.loc[mask_goteo, "unidades_num"].abs().sum())
+        if not trabajo.empty
+        else 0.0
+    )
 
     for tipo in TIPOS_ANALISIS:
-        parte = trabajo[trabajo["bloque_analisis"].eq(tipo)] if not trabajo.empty else pd.DataFrame()
+        if not trabajo.empty and tipo == "goteo_puro":
+            parte = trabajo[mask_goteo]
+        else:
+            parte = trabajo[trabajo["bloque_analisis"].eq(tipo)] if not trabajo.empty else pd.DataFrame()
         bruto = float(parte["bruto_num"].sum()) if not parte.empty else 0.0
         neto = float(parte["neto_num"].sum()) if not parte.empty else 0.0
         unidades = float(parte["unidades_num"].sum()) if not parte.empty else 0.0
-        cargos = _cargo_extra_por_bloque(tipo, analisis_faceta, analisis_avantia, resumen_bitransfer, analisis_transfer)
+        if tipo in {"goteo_puro", "especialidad", "parafarmacia"}:
+            cargos = _cargo_faceta_por_unidades(analisis_faceta, unidades, unidades_goteo_elegibles)
+        else:
+            cargos = _cargo_extra_por_bloque(
+                tipo,
+                analisis_faceta,
+                analisis_avantia,
+                resumen_bitransfer,
+                analisis_transfer,
+            )
         coste_real = neto + cargos
         descuento_euros = 0.0
         if not parte.empty and tipo == "especialidad_cara":
