@@ -271,6 +271,20 @@ def _formatear_valor_tabla(valor):
     return str(valor)
 
 
+def _formatear_descuento_cargo_pct(valor):
+    if valor is None:
+        return "-"
+    try:
+        if pd.isna(valor):
+            return "-"
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return "-"
+    if numero < 0:
+        return f"+{abs(numero):.2f}%"
+    return f"{numero:.2f}%"
+
+
 def _mostrar_tabla_dashboard(df, max_filas=None, renombrar_columnas=True):
     if df is None:
         return
@@ -285,6 +299,21 @@ def _mostrar_tabla_dashboard(df, max_filas=None, renombrar_columnas=True):
     tabla = tabla.apply(lambda columna: columna.map(_formatear_valor_tabla))
     html_tabla = tabla.to_html(index=False, escape=True, border=0, classes="dashboard-table")
     st.markdown(f'<div class="dashboard-table-wrap">{html_tabla}</div>', unsafe_allow_html=True)
+
+
+def _preparar_desglose_para_presentacion(desglose):
+    tabla = pd.DataFrame(desglose).copy()
+    if tabla.empty:
+        return tabla
+    columnas_pct = [
+        "descuento_aparente_pct",
+        "descuento_real_final_pct",
+        "descuento_medio_pct",
+    ]
+    for columna in columnas_pct:
+        if columna in tabla.columns:
+            tabla[columna] = tabla[columna].apply(_formatear_descuento_cargo_pct)
+    return tabla
 
 
 def _mostrar_dataframe_completo(df):
@@ -1062,7 +1091,7 @@ def _mostrar_analisis_distribuidora(analisis):
         {"label": "Compra bruta", "value": f"{resumen.get('compra_bruta_total', 0):.2f} €"},
         {"label": "Compra neta", "value": f"{resumen.get('compra_neta_total', 0):.2f} €"},
         {"label": "Gastos totales", "value": f"{gastos_resumen.get('total_gastos', 0):.2f} €"},
-        {"label": "Desc. medio", "value": "-" if descuento is None else f"{descuento:.2f}%"},
+        {"label": "Desc. medio", "value": _formatear_descuento_cargo_pct(descuento)},
         {
             "label": "Compra mensual",
             "value": "-" if volumen.get("compra_total_mensual") is None else f"{volumen.get('compra_total_mensual'):.2f} €",
@@ -1071,11 +1100,11 @@ def _mostrar_analisis_distribuidora(analisis):
         {"label": "% gastos/compra", "value": f"{gastos_resumen.get('pct_gastos_sobre_compra', 0):.2f}%"},
         {
             "label": "Goteo aparente",
-            "value": "-" if descuentos.get("goteo_aparente_pct") is None else f"{descuentos.get('goteo_aparente_pct'):.2f}%",
+            "value": _formatear_descuento_cargo_pct(descuentos.get("goteo_aparente_pct")),
         },
         {
             "label": "Goteo real",
-            "value": "-" if descuentos.get("goteo_real_pct") is None else f"{descuentos.get('goteo_real_pct'):.2f}%",
+            "value": _formatear_descuento_cargo_pct(descuentos.get("goteo_real_pct")),
         },
     ])
 
@@ -1090,7 +1119,7 @@ def _mostrar_analisis_distribuidora(analisis):
     desglose = analisis.get("desglose_por_tipo", analisis.get("desglose", pd.DataFrame()))
     if desglose is not None and not desglose.empty:
         st.caption("Desglose por tipo de compra")
-        _mostrar_tabla_dashboard(desglose)
+        _mostrar_tabla_dashboard(_preparar_desglose_para_presentacion(desglose))
 
     cargos = analisis.get("gastos_ocultos", analisis.get("cargos", pd.DataFrame()))
     if cargos is not None and not cargos.empty:
