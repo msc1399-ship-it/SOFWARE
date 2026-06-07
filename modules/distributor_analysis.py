@@ -794,6 +794,7 @@ def generar_analisis_distribuidora(
         if not fila_clubes.empty:
             bruto_clubes = float(pd.to_numeric(fila_clubes.iloc[0].get("bruto", 0), errors="coerce") or 0)
             lineas_clubes = int(pd.to_numeric(fila_clubes.iloc[0].get("lineas", 0), errors="coerce") or 0)
+            unidades_clubes = float(pd.to_numeric(fila_clubes.iloc[0].get("unidades", 0), errors="coerce") or 0)
             if bruto_clubes > 0 or lineas_clubes > 0:
                 referencia_club = club_analysis.calcular_descuento_referencia_clubes(
                     df,
@@ -809,6 +810,14 @@ def generar_analisis_distribuidora(
                     alertas.append("No hay descuento habitual de especialidad disponible para estimar perdida vs condicion comercial.")
                 else:
                     club_sin_liquidacion = club_analysis.detectar_compras_club(df)
+                    if club_sin_liquidacion.empty and bruto_clubes > 0:
+                        club_sin_liquidacion = pd.DataFrame(
+                            [{
+                                "bruto": bruto_clubes,
+                                "neto": bruto_clubes,
+                                "unidades": unidades_clubes if unidades_clubes > 0 else lineas_clubes,
+                            }]
+                        )
                     simulacion_club = club_analysis.calcular_perdida_oportunidad_club_simulada(
                         club_sin_liquidacion,
                         desglose=desglose,

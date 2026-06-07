@@ -14,6 +14,13 @@ DEFINICIONES = {
     "efg": {"base": "equivalencias_efg", "extensiones": {"xlsx"}},
 }
 
+NOMBRES_INCLUIDOS = {
+    "ministerio": "Nomenclator facturacion Ministerio incluido",
+    "manual": "Base manual CN/laboratorio incluida",
+    "aemps": "Nomenclator AEMPS incluido",
+    "efg": "Equivalencias EFG incluidas",
+}
+
 
 class ArchivoPersistido(io.BytesIO):
     def __init__(self, contenido, nombre):
@@ -53,8 +60,29 @@ def _ruta_para(clave, extension):
 def obtener_metadata(clave=None):
     metadata = _leer_metadata()
     if clave is None:
-        return metadata
-    return metadata.get(clave)
+        for clave_definida in DEFINICIONES:
+            metadata.setdefault(clave_definida, _descubrir_archivo(clave_definida) or {})
+        return {k: v for k, v in metadata.items() if v}
+    return metadata.get(clave) or _descubrir_archivo(clave)
+
+
+def _descubrir_archivo(clave):
+    if clave not in DEFINICIONES:
+        return None
+    definicion = DEFINICIONES[clave]
+    for extension in definicion["extensiones"]:
+        ruta = _ruta_para(clave, extension)
+        if ruta.exists() and ruta.is_file():
+            stat = ruta.stat()
+            return {
+                "filename": ruta.name,
+                "original_name": ruta.name,
+                "label": NOMBRES_INCLUIDOS.get(clave, ruta.name),
+                "size": stat.st_size,
+                "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                "incluido_en_codigo": True,
+            }
+    return None
 
 
 def guardar_archivo(clave, uploaded_file):

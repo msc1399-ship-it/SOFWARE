@@ -4003,9 +4003,6 @@ with st.sidebar:
         label_visibility="visible",
     )
 
-    with st.expander("Base maestra CN / laboratorio", expanded=False):
-        _render_base_maestra_laboratorios()
-
     with st.expander("Contexto de farmacia", expanded=False):
         render_contexto_farmacia()
 
