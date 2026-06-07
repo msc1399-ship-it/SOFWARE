@@ -40,6 +40,30 @@ def _serie_numerica(df, columna):
     return df[columna].apply(_normalizar_numero)
 
 
+def _anadir_coste_total_con_servicio(df):
+    if df is None or df.empty:
+        return df
+
+    resultado = df.copy()
+    unidades = _serie_numerica(resultado, "unidades").abs().replace(0, 1)
+    neto = _serie_numerica(resultado, "neto")
+    iva = _serie_numerica(resultado, "iva") if "iva" in resultado.columns else pd.Series(0.0, index=resultado.index)
+    re = _serie_numerica(resultado, "re") if "re" in resultado.columns else pd.Series(0.0, index=resultado.index)
+    cargo = _serie_numerica(resultado, "cargo_servicio")
+
+    resultado["coste_total_sin_servicio_iva_re"] = neto * (1 + (iva / 100) + (re / 100))
+    resultado["cargo_servicio_con_iva_21"] = cargo * 1.21
+    resultado["cargo_servicio_unitario_con_iva_21"] = resultado["cargo_servicio_con_iva_21"] / unidades
+    resultado["coste_total_con_servicio_iva_re"] = (
+        resultado["coste_total_sin_servicio_iva_re"]
+        + resultado["cargo_servicio_con_iva_21"]
+    )
+    resultado["coste_unitario_con_servicio_iva_re"] = (
+        resultado["coste_total_con_servicio_iva_re"] / unidades
+    )
+    return resultado
+
+
 def _contiene_observacion_b(valor):
     texto = _normalizar_texto(valor)
     if not texto or texto == "nan":
@@ -107,12 +131,14 @@ def _imputar_devoluciones_en_compras(df_goteo, abonos):
         imputacion["cargo_devolucion_linea"] = (
             imputacion["cargo_devolucion_unitario"] * imputacion["unidades"]
         )
+        imputacion["cargo_servicio"] = imputacion["cargo_devolucion_linea"]
         imputacion["neto_con_devolucion"] = (
             imputacion["neto"] + imputacion["cargo_devolucion_linea"]
         )
         imputacion["neto_unitario_con_devolucion"] = (
             imputacion["neto_con_devolucion"] / imputacion["unidades"].replace(0, 1)
         )
+        imputacion = _anadir_coste_total_con_servicio(imputacion)
 
         columnas_imputacion = [
             "cn",
@@ -120,17 +146,25 @@ def _imputar_devoluciones_en_compras(df_goteo, abonos):
             "unidades",
             "bruto",
             "neto",
+            "iva",
+            "re",
             "cargo_devolucion_unitario",
             "cargo_devolucion_linea",
+            "cargo_servicio_con_iva_21",
             "neto_con_devolucion",
             "neto_unitario_con_devolucion",
+            "coste_total_con_servicio_iva_re",
+            "coste_unitario_con_servicio_iva_re",
         ]
         imputacion = imputacion[[col for col in columnas_imputacion if col in imputacion.columns]]
         for columna in [
             "cargo_devolucion_unitario",
             "cargo_devolucion_linea",
+            "cargo_servicio_con_iva_21",
             "neto_con_devolucion",
             "neto_unitario_con_devolucion",
+            "coste_total_con_servicio_iva_re",
+            "coste_unitario_con_servicio_iva_re",
         ]:
             if columna in imputacion.columns:
                 imputacion[columna] = imputacion[columna].round(4)
@@ -158,6 +192,8 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
     df_goteo["bruto"] = _serie_numerica(df_goteo, "bruto")
     df_goteo["neto"] = _serie_numerica(df_goteo, "neto")
     df_goteo["unidades"] = _serie_numerica(df_goteo, "unidades")
+    df_goteo["iva"] = _serie_numerica(df_goteo, "iva")
+    df_goteo["re"] = _serie_numerica(df_goteo, "re")
 
     tiene_avantia = hay_avantia(df_goteo, gastos_factura)
     reglas_servicios = (condicion or {}).get("servicios", {})
@@ -185,6 +221,7 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
             vida_natural["neto_con_servicio"] / vida_natural["unidades"].abs().replace(0, 1)
         )
         vida_natural["estado_imputacion"] = "imputado_en_linea"
+        vida_natural = _anadir_coste_total_con_servicio(vida_natural)
 
     total_vida_natural = round(float(vida_natural["cargo_servicio"].sum()), 2) if not vida_natural.empty else 0.0
     diferencia_servicios = round(total_servicios_factura - total_vida_natural, 2)
@@ -286,18 +323,32 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
         "unidades",
         "bruto",
         "neto",
+        "iva",
+        "re",
         "observaciones",
         "cargo_pct",
         "base_cargo",
         "cargo_servicio",
         "cargo_servicio_unitario",
+        "cargo_servicio_con_iva_21",
+        "cargo_servicio_unitario_con_iva_21",
         "neto_con_servicio",
         "neto_unitario_con_servicio",
+        "coste_total_sin_servicio_iva_re",
+        "coste_total_con_servicio_iva_re",
+        "coste_unitario_con_servicio_iva_re",
         "estado_imputacion",
     ]
 
     if not detalle.empty:
         detalle = detalle[[col for col in columnas_detalle if col in detalle.columns]]
+        for columna in [
+            "neto_con_servicio",
+            "cargo_servicio_con_iva_21",
+            "coste_total_con_servicio_iva_re",
+        ]:
+            if columna not in detalle.columns:
+                detalle[columna] = 0.0
         detalle["cargo_servicio"] = detalle["cargo_servicio"].round(4)
         if "cargo_servicio_unitario" in detalle.columns:
             detalle["cargo_servicio_unitario"] = detalle["cargo_servicio_unitario"].round(4)
@@ -305,6 +356,15 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
             detalle["neto_con_servicio"] = detalle["neto_con_servicio"].round(4)
         if "neto_unitario_con_servicio" in detalle.columns:
             detalle["neto_unitario_con_servicio"] = detalle["neto_unitario_con_servicio"].round(4)
+        for columna in [
+            "cargo_servicio_con_iva_21",
+            "cargo_servicio_unitario_con_iva_21",
+            "coste_total_sin_servicio_iva_re",
+            "coste_total_con_servicio_iva_re",
+            "coste_unitario_con_servicio_iva_re",
+        ]:
+            if columna in detalle.columns:
+                detalle[columna] = detalle[columna].round(4)
 
     if not detalle.empty and "cn" in detalle.columns:
         resumen_cn = (
@@ -316,11 +376,15 @@ def analizar_gastos_servicios(df_compras, gastos_factura, condicion=None):
                 neto=("neto", "sum"),
                 cargo_servicio=("cargo_servicio", "sum"),
                 neto_con_servicio=("neto_con_servicio", "sum"),
+                cargo_servicio_con_iva_21=("cargo_servicio_con_iva_21", "sum"),
+                coste_total_con_servicio_iva_re=("coste_total_con_servicio_iva_re", "sum"),
             )
             .reset_index()
         )
         resumen_cn["cargo_servicio"] = resumen_cn["cargo_servicio"].round(4)
         resumen_cn["neto_con_servicio"] = resumen_cn["neto_con_servicio"].round(4)
+        resumen_cn["cargo_servicio_con_iva_21"] = resumen_cn["cargo_servicio_con_iva_21"].round(4)
+        resumen_cn["coste_total_con_servicio_iva_re"] = resumen_cn["coste_total_con_servicio_iva_re"].round(4)
     else:
         resumen_cn = pd.DataFrame()
 
