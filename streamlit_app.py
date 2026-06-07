@@ -2808,7 +2808,6 @@ def render_proveedor_base(nombre_proveedor, proveedor_id):
     if analisis_guardado:
         _mostrar_analisis_distribuidora(analisis_guardado)
         render_recomendaciones_ia()
-        render_simulador_condiciones(key_prefix=f"simulador_{proveedor_id}")
 
 
 def render_facturas_laboratorios():
@@ -3097,7 +3096,6 @@ def render_resumen():
         st.info("Genera primero los análisis individuales.")
 
     render_recomendaciones_ia()
-    render_simulador_condiciones(key_prefix="simulador_resumen")
 
 
 def render_vida_pharma():
@@ -3867,7 +3865,6 @@ def render_vida_pharma():
     if analisis_guardado:
         _mostrar_analisis_distribuidora(analisis_guardado)
         render_recomendaciones_ia()
-        render_simulador_condiciones(key_prefix="simulador_bidafarma")
 
 
 def render_contexto_farmacia():
