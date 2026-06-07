@@ -204,9 +204,11 @@ def calcular_perdida_oportunidad_club_simulada(
     bruto_parafarmacia = _valor_desglose(desglose, "parafarmacia", "bruto") or 0.0
     unidades_parafarmacia = _valor_desglose(desglose, "parafarmacia", "unidades") or 0.0
     cargos_parafarmacia = _valor_desglose(desglose, "parafarmacia", "cargos_imputados") or 0.0
+    unidades_goteo_puro = _valor_desglose(desglose, "goteo_puro", "unidades") or 0.0
+    cargos_goteo_puro = _valor_desglose(desglose, "goteo_puro", "cargos_imputados") or 0.0
 
-    cargo_total_franquicia = cargos_especialidad + cargos_parafarmacia
-    unidades_elegibles_actuales = unidades_especialidad + unidades_parafarmacia
+    cargo_total_franquicia = cargos_goteo_puro or (cargos_especialidad + cargos_parafarmacia)
+    unidades_elegibles_actuales = unidades_goteo_puro or (unidades_especialidad + unidades_parafarmacia)
     unidades_elegibles_simuladas = unidades_elegibles_actuales + unidades_club
     cargo_especialidad_actual = cargos_especialidad
     cargo_especialidad_simulado = (
