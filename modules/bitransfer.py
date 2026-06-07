@@ -275,9 +275,24 @@ def leer_cuadro_resumen_consumos(file):
     if not bitransfer and not plataformas:
         raise ValueError("No se ha detectado ningún bloque BitTransfer o Plataforma.")
 
+    df_bitransfer = pd.DataFrame(bitransfer)
+    df_plataformas = pd.DataFrame(plataformas)
+
+    for df_costes in [df_bitransfer, df_plataformas]:
+        if not df_costes.empty and "cargo_eur" in df_costes.columns:
+            df_costes["cargo_eur_con_iva_21"] = pd.to_numeric(
+                df_costes["cargo_eur"],
+                errors="coerce",
+            ).fillna(0) * 1.21
+        if not df_costes.empty and "cuota" in df_costes.columns:
+            df_costes["cuota_con_iva_21"] = pd.to_numeric(
+                df_costes["cuota"],
+                errors="coerce",
+            ).fillna(0) * 1.21
+
     return {
-        "bitransfer": pd.DataFrame(bitransfer),
-        "plataformas": pd.DataFrame(plataformas),
+        "bitransfer": df_bitransfer,
+        "plataformas": df_plataformas,
     }
 
 
@@ -294,12 +309,17 @@ def conciliar_bitransfer_consumos(df_compras, resumen_consumos):
     df_compras["importe_neto_unitario"] = df_compras["importe_neto_total"] / df_compras["cantidad"]
     df_compras["venta_bruta"] = df_compras["pvl"] * df_compras["cantidad"]
     df_compras["cargo_teorico_unitario"] = df_compras["pvl"] * (df_compras["cargo_pct"].fillna(0) / 100)
+    df_compras["cargo_teorico_unitario_iva_21"] = df_compras["cargo_teorico_unitario"] * 1.21
     df_compras["coste_real_unitario"] = (
-        df_compras["importe_neto_unitario"] + df_compras["cargo_teorico_unitario"]
+        df_compras["importe_neto_unitario"] + df_compras["cargo_teorico_unitario_iva_21"]
+    )
+    df_compras["cargo_teorico_total"] = df_compras["cargo_teorico_unitario"] * df_compras["cantidad"]
+    df_compras["cargo_teorico_total_iva_21"] = (
+        df_compras["cargo_teorico_unitario_iva_21"] * df_compras["cantidad"]
     )
     df_compras["coste_real_total"] = (
         df_compras["importe_neto_total"]
-        + (df_compras["cargo_teorico_unitario"] * df_compras["cantidad"])
+        + df_compras["cargo_teorico_total_iva_21"]
     )
 
     total_compras = round(df_compras["venta_bruta"].sum(), 2)
@@ -319,9 +339,8 @@ def conciliar_bitransfer_consumos(df_compras, resumen_consumos):
             * (filas_cargo["cargo_pct"].fillna(0) / 100)
         ).sum()
 
-    cargo_teorico_total = (
-        df_compras["cargo_teorico_unitario"] * df_compras["cantidad"]
-    ).sum()
+    cargo_teorico_total = df_compras["cargo_teorico_total"].sum()
+    cargo_teorico_total_iva_21 = df_compras["cargo_teorico_total_iva_21"].sum()
 
     columnas_visibles = [
         "cn",
@@ -332,6 +351,7 @@ def conciliar_bitransfer_consumos(df_compras, resumen_consumos):
         "cargo_pct",
         "importe_neto_unitario",
         "cargo_teorico_unitario",
+        "cargo_teorico_unitario_iva_21",
         "coste_real_unitario",
     ]
     df_conciliado = df_compras[columnas_visibles].copy()
@@ -342,9 +362,11 @@ def conciliar_bitransfer_consumos(df_compras, resumen_consumos):
         "diferencia_venta_bruta": float(round(total_compras - total_resumen_valor, 2)),
         "cargo_resumen": round(float(cargo_resumen), 2),
         "cargo_teorico_compras": round(float(cargo_teorico_total), 2),
+        "cargo_teorico_compras_con_iva_21": round(float(cargo_teorico_total_iva_21), 2),
         "diferencia_cargo": round(float(cargo_teorico_total - cargo_resumen), 2),
         "importe_neto_compras": round(float(df_compras["importe_neto_total"].sum()), 2),
         "coste_real_total_compras": round(float(df_compras["coste_real_total"].sum()), 2),
+        "coste_extra_con_iva_21": round(float(cargo_teorico_total_iva_21), 2),
     }
 
     return df_conciliado, resumen

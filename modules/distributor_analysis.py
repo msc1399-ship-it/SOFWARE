@@ -196,7 +196,13 @@ def _cargo_extra_por_bloque(
     cargo = _cargo_faceta(analisis_faceta, bloque)
 
     if bloque == "bitransfer" and resumen_bitransfer:
-        cargo += float(resumen_bitransfer.get("cargo_resumen", 0) or 0)
+        cargo += float(
+            resumen_bitransfer.get(
+                "coste_extra_con_iva_21",
+                resumen_bitransfer.get("cargo_resumen", 0),
+            )
+            or 0
+        )
 
     if bloque == "transfer" and analisis_transfer:
         detalle = _df_seguro(analisis_transfer.get("detalle"))
@@ -207,7 +213,13 @@ def _cargo_extra_por_bloque(
 
     if bloque == "avantia" and analisis_avantia:
         resumen = analisis_avantia.get("resumen") or {}
-        cargo += float(resumen.get("coste_total_avantia", 0) or 0)
+        cargo += float(
+            resumen.get(
+                "coste_total_avantia_con_iva_21",
+                resumen.get("coste_total_avantia", 0),
+            )
+            or 0
+        )
 
     return cargo
 
@@ -791,11 +803,18 @@ def generar_analisis_distribuidora(
                 )
                 descuento_goteo = referencia_club.get("descuento_pct")
                 perdida_vs_goteo = 0.0
+                simulacion_club = {}
                 alertas = ["Falta documento de escalados/liquidaciones para calcular perdida real."]
                 if descuento_goteo is None:
                     alertas.append("No hay descuento habitual de especialidad disponible para estimar perdida vs condicion comercial.")
                 else:
-                    perdida_vs_goteo = round(bruto_clubes * (float(descuento_goteo) / 100), 2)
+                    club_sin_liquidacion = club_analysis.detectar_compras_club(df)
+                    simulacion_club = club_analysis.calcular_perdida_oportunidad_club_simulada(
+                        club_sin_liquidacion,
+                        desglose=desglose,
+                        descuento_fallback=descuento_goteo,
+                    )
+                    perdida_vs_goteo = simulacion_club.get("perdida_euros", 0.0)
                 analisis_clubes = {
                     "ok": True,
                     "proveedor": proveedor_detectado or proveedor,
@@ -809,11 +828,17 @@ def generar_analisis_distribuidora(
                     "oportunidades_siguiente_tramo": pd.DataFrame(),
                     "alertas": alertas,
                     "detalle_club": pd.DataFrame(),
-                    "descuento_habitual_referencia_pct": descuento_goteo,
-                    "descuento_habitual_referencia_metodo": referencia_club.get("metodo"),
+                    "descuento_habitual_referencia_pct": simulacion_club.get("descuento_pct", descuento_goteo),
+                    "descuento_habitual_referencia_metodo": simulacion_club.get("metodo", referencia_club.get("metodo")),
                     "descuento_aparente_especialidad_pct": referencia_club.get("descuento_aparente_especialidad_pct"),
                     "cargos_especialidad_referencia": referencia_club.get("cargos_especialidad"),
                     "compra_club_simulada_referencia": referencia_club.get("compra_club_simulada"),
+                    "descuento_bruto_club_simulado": simulacion_club.get("descuento_bruto_simulado", 0.0),
+                    "cargo_incremental_franquicia_simulada": simulacion_club.get("cargo_incremental_franquicia", 0.0),
+                    "cargo_club_franquicia_simulada": simulacion_club.get("cargo_club_franquicia_simulada", 0.0),
+                    "cargo_unitario_franquicia_simulada": simulacion_club.get("cargo_unitario_franquicia_simulada", 0.0),
+                    "unidades_club_simuladas": simulacion_club.get("unidades_club_simuladas", 0.0),
+                    "unidades_elegibles_simuladas": simulacion_club.get("unidades_elegibles_simuladas", 0.0),
                 }
     especialidad_cara = calcular_especialidad_cara(df)
     parafarmacia_financiada = calcular_parafarmacia_financiada(df)

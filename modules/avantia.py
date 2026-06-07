@@ -395,6 +395,7 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
                 "cargo_especialidad": 0.0,
                 "cargo_parafarmacia": 0.0,
                 "cargo_total": 0.0,
+                "cargo_total_con_iva_21": 0.0,
                 "cargo_bruto_especialidad": 0.0,
                 "cargo_bruto_parafarmacia": 0.0,
                 "bonificacion_especialidad": 0.0,
@@ -402,7 +403,9 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
                 "pct_especialidad": 0.0,
                 "pct_parafarmacia": 0.0,
                 "cuota_prorrateada": 0.0,
+                "cuota_avantia_con_iva_21": 0.0,
                 "coste_total_avantia": 0.0,
+                "coste_total_avantia_con_iva_21": 0.0,
                 "unidades_avantia": 0.0,
             },
         }
@@ -425,15 +428,25 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
     df_avantia["cargo_avantia"] = (
         df_avantia["bruto"].abs() * (df_avantia["cargo_pct_avantia"] / 100)
     )
+    df_avantia["cargo_avantia_con_iva_21"] = df_avantia["cargo_avantia"] * 1.21
 
     cuota_avantia = _importe_gasto(gastos_factura, "avantia")
+    cuota_avantia_con_iva_21 = cuota_avantia * 1.21
     unidades_totales = float(df_avantia["unidades"].abs().sum())
     df_avantia["cuota_avantia_unitaria"] = (
         cuota_avantia / unidades_totales if unidades_totales > 0 else 0.0
     )
+    df_avantia["cuota_avantia_unitaria_con_iva_21"] = (
+        cuota_avantia_con_iva_21 / unidades_totales if unidades_totales > 0 else 0.0
+    )
     df_avantia["cuota_avantia_linea"] = df_avantia["cuota_avantia_unitaria"] * df_avantia["unidades"].abs()
-    df_avantia["coste_avantia"] = df_avantia["neto"] + df_avantia["cargo_avantia"]
-    df_avantia["neto_con_avantia"] = df_avantia["coste_avantia"] + df_avantia["cuota_avantia_linea"]
+    df_avantia["cuota_avantia_linea_con_iva_21"] = (
+        df_avantia["cuota_avantia_unitaria_con_iva_21"] * df_avantia["unidades"].abs()
+    )
+    df_avantia["coste_avantia"] = df_avantia["neto"] + df_avantia["cargo_avantia_con_iva_21"]
+    df_avantia["neto_con_avantia"] = (
+        df_avantia["coste_avantia"] + df_avantia["cuota_avantia_linea_con_iva_21"]
+    )
     df_avantia["neto_unitario_con_avantia"] = (
         df_avantia["neto_con_avantia"] / df_avantia["unidades"].abs().replace(0, 1)
     )
@@ -448,7 +461,9 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
         "neto",
         "cargo_pct_avantia",
         "cargo_avantia",
+        "cargo_avantia_con_iva_21",
         "cuota_avantia_linea",
+        "cuota_avantia_linea_con_iva_21",
         "coste_avantia",
         "neto_con_avantia",
         "neto_unitario_con_avantia",
@@ -460,7 +475,9 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
         "neto",
         "cargo_pct_avantia",
         "cargo_avantia",
+        "cargo_avantia_con_iva_21",
         "cuota_avantia_linea",
+        "cuota_avantia_linea_con_iva_21",
         "coste_avantia",
         "neto_con_avantia",
         "neto_unitario_con_avantia",
@@ -476,9 +493,11 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
         df_avantia[df_avantia["categoria_avantia"] == "parafarmacia"]["cargo_avantia"].sum()
     )
     cargo_total = cargo_especialidad + cargo_parafarmacia
+    cargo_total_con_iva_21 = cargo_total * 1.21
 
     resumen = {
         "cuota_avantia": cuota_avantia,
+        "cuota_avantia_con_iva_21": round(cuota_avantia_con_iva_21, 2),
         "gasto_gestion": _importe_gasto(gastos_factura, "gestion"),
         "pct_especialidad": pct_especialidad,
         "pct_parafarmacia": pct_parafarmacia,
@@ -489,8 +508,10 @@ def analizar_avantia(df_compras, gastos_factura, df_cargos=None):
         "cargo_especialidad": round(cargo_especialidad, 2),
         "cargo_parafarmacia": round(cargo_parafarmacia, 2),
         "cargo_total": round(cargo_total, 2),
+        "cargo_total_con_iva_21": round(cargo_total_con_iva_21, 2),
         "cuota_prorrateada": round(cuota_avantia, 2),
         "coste_total_avantia": round(cargo_total + cuota_avantia, 2),
+        "coste_total_avantia_con_iva_21": round(cargo_total_con_iva_21 + cuota_avantia_con_iva_21, 2),
         "unidades_avantia": unidades_totales,
     }
 

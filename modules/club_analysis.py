@@ -181,6 +181,78 @@ def _valor_desglose(desglose, bloque, columna):
     return None if pd.isna(valor) else float(valor)
 
 
+def calcular_perdida_oportunidad_club_simulada(
+    df_club_sin_liquidacion,
+    desglose=None,
+    descuento_fallback=None,
+):
+    df_club = _df_seguro(df_club_sin_liquidacion)
+    compra_club = float(_serie_numerica(df_club, "bruto").sum()) if not df_club.empty else 0.0
+    unidades_club = float(_serie_numerica(df_club, "unidades").abs().sum()) if not df_club.empty else 0.0
+    if compra_club <= 0:
+        return {
+            "perdida_euros": 0.0,
+            "descuento_pct": None,
+            "metodo": "sin_compra_club",
+            "cargo_incremental_franquicia": 0.0,
+        }
+
+    bruto_especialidad = _valor_desglose(desglose, "especialidad", "bruto") or 0.0
+    neto_especialidad = _valor_desglose(desglose, "especialidad", "neto") or 0.0
+    unidades_especialidad = _valor_desglose(desglose, "especialidad", "unidades") or 0.0
+    cargos_especialidad = _valor_desglose(desglose, "especialidad", "cargos_imputados") or 0.0
+    bruto_parafarmacia = _valor_desglose(desglose, "parafarmacia", "bruto") or 0.0
+    unidades_parafarmacia = _valor_desglose(desglose, "parafarmacia", "unidades") or 0.0
+    cargos_parafarmacia = _valor_desglose(desglose, "parafarmacia", "cargos_imputados") or 0.0
+
+    cargo_total_franquicia = cargos_especialidad + cargos_parafarmacia
+    unidades_elegibles_actuales = unidades_especialidad + unidades_parafarmacia
+    unidades_elegibles_simuladas = unidades_elegibles_actuales + unidades_club
+    cargo_especialidad_actual = cargos_especialidad
+    cargo_especialidad_simulado = (
+        cargo_total_franquicia * ((unidades_especialidad + unidades_club) / unidades_elegibles_simuladas)
+        if cargo_total_franquicia > 0 and unidades_elegibles_simuladas > 0
+        else cargo_especialidad_actual
+    )
+    cargo_incremental = max(0.0, cargo_especialidad_simulado - cargo_especialidad_actual)
+    cargo_unitario_simulado = (
+        cargo_total_franquicia / unidades_elegibles_simuladas
+        if cargo_total_franquicia > 0 and unidades_elegibles_simuladas > 0
+        else 0.0
+    )
+    cargo_club_simulado = cargo_unitario_simulado * unidades_club
+
+    if bruto_especialidad > 0:
+        descuento_pct = (1 - (neto_especialidad / bruto_especialidad)) * 100
+        metodo = "descuento_aparente_especialidad_menos_franquicia_simulada"
+    elif descuento_fallback is not None:
+        descuento_pct = float(descuento_fallback)
+        metodo = "fallback_menos_franquicia_simulada"
+    else:
+        return {
+            "perdida_euros": 0.0,
+            "descuento_pct": None,
+            "metodo": "sin_referencia",
+            "cargo_incremental_franquicia": round(cargo_incremental, 2),
+        }
+
+    descuento_bruto_simulado = compra_club * (float(descuento_pct) / 100)
+    perdida = descuento_bruto_simulado - cargo_club_simulado
+    return {
+        "perdida_euros": round(float(perdida), 2),
+        "descuento_pct": round(float(descuento_pct), 2),
+        "metodo": metodo,
+        "descuento_bruto_simulado": round(float(descuento_bruto_simulado), 2),
+        "cargo_incremental_franquicia": round(float(cargo_incremental), 2),
+        "cargo_club_franquicia_simulada": round(float(cargo_club_simulado), 2),
+        "cargo_unitario_franquicia_simulada": round(float(cargo_unitario_simulado), 4),
+        "cargo_especialidad_actual": round(float(cargo_especialidad_actual), 2),
+        "cargo_especialidad_simulado": round(float(cargo_especialidad_simulado), 2),
+        "unidades_club_simuladas": round(float(unidades_club), 2),
+        "unidades_elegibles_simuladas": round(float(unidades_elegibles_simuladas), 2),
+    }
+
+
 def calcular_descuento_referencia_clubes(
     df_compras,
     desglose=None,
@@ -434,11 +506,27 @@ def actualizar_referencia_descuento_clubes(
     actualizado["descuento_aparente_especialidad_pct"] = referencia.get("descuento_aparente_especialidad_pct")
     actualizado["cargos_especialidad_referencia"] = referencia.get("cargos_especialidad")
     actualizado["compra_club_simulada_referencia"] = referencia.get("compra_club_simulada")
-    actualizado["perdida_vs_descuento_habitual"] = (
-        0.0
-        if descuento_habitual is None
-        else round(compra_sin_liquidacion * (float(descuento_habitual) / 100), 2)
+    detalle_club = _df_seguro(actualizado.get("detalle_club"))
+    if not detalle_club.empty and "tiene_liquidacion_club" in detalle_club.columns:
+        club_sin_liquidacion = detalle_club[
+            ~detalle_club["tiene_liquidacion_club"].fillna(False).astype(bool)
+        ].copy()
+    else:
+        club_sin_liquidacion = detalle_club
+    simulacion = calcular_perdida_oportunidad_club_simulada(
+        club_sin_liquidacion,
+        desglose=desglose,
+        descuento_fallback=descuento_habitual,
     )
+    actualizado["perdida_vs_descuento_habitual"] = simulacion.get("perdida_euros", 0.0)
+    actualizado["descuento_habitual_referencia_pct"] = simulacion.get("descuento_pct", descuento_habitual)
+    actualizado["descuento_habitual_referencia_metodo"] = simulacion.get("metodo", referencia.get("metodo"))
+    actualizado["descuento_bruto_club_simulado"] = simulacion.get("descuento_bruto_simulado", 0.0)
+    actualizado["cargo_incremental_franquicia_simulada"] = simulacion.get("cargo_incremental_franquicia", 0.0)
+    actualizado["cargo_club_franquicia_simulada"] = simulacion.get("cargo_club_franquicia_simulada", 0.0)
+    actualizado["cargo_unitario_franquicia_simulada"] = simulacion.get("cargo_unitario_franquicia_simulada", 0.0)
+    actualizado["unidades_club_simuladas"] = simulacion.get("unidades_club_simuladas", 0.0)
+    actualizado["unidades_elegibles_simuladas"] = simulacion.get("unidades_elegibles_simuladas", 0.0)
     return actualizado
 
 
@@ -507,10 +595,14 @@ def analizar_clubes(
         descuento_fallback=descuento_goteo_real,
     )
     descuento_habitual = referencia.get("descuento_pct")
-    perdida_vs_goteo = calcular_perdida_vs_descuento_habitual(
+    simulacion_perdida = calcular_perdida_oportunidad_club_simulada(
         club_sin_liquidacion,
-        descuento_habitual,
+        desglose=desglose,
+        descuento_fallback=descuento_habitual,
     )
+    perdida_vs_goteo = simulacion_perdida.get("perdida_euros", 0.0)
+    if simulacion_perdida.get("descuento_pct") is not None:
+        descuento_habitual = simulacion_perdida.get("descuento_pct")
     if descuento_habitual is None:
         alertas.append("No hay descuento habitual de especialidad disponible para estimar perdida vs condicion comercial.")
 
@@ -532,8 +624,14 @@ def analizar_clubes(
         ),
         "detalle_club": df_club_marcado,
         "descuento_habitual_referencia_pct": descuento_habitual,
-        "descuento_habitual_referencia_metodo": referencia.get("metodo"),
+        "descuento_habitual_referencia_metodo": simulacion_perdida.get("metodo", referencia.get("metodo")),
         "descuento_aparente_especialidad_pct": referencia.get("descuento_aparente_especialidad_pct"),
         "cargos_especialidad_referencia": referencia.get("cargos_especialidad"),
         "compra_club_simulada_referencia": referencia.get("compra_club_simulada"),
+        "descuento_bruto_club_simulado": simulacion_perdida.get("descuento_bruto_simulado", 0.0),
+        "cargo_incremental_franquicia_simulada": simulacion_perdida.get("cargo_incremental_franquicia", 0.0),
+        "cargo_club_franquicia_simulada": simulacion_perdida.get("cargo_club_franquicia_simulada", 0.0),
+        "cargo_unitario_franquicia_simulada": simulacion_perdida.get("cargo_unitario_franquicia_simulada", 0.0),
+        "unidades_club_simuladas": simulacion_perdida.get("unidades_club_simuladas", 0.0),
+        "unidades_elegibles_simuladas": simulacion_perdida.get("unidades_elegibles_simuladas", 0.0),
     }

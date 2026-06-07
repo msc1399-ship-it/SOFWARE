@@ -56,7 +56,7 @@ try:
 except Exception:
     APP_PASSWORD = ""
 MAX_UPLOAD_MB = 50
-ANALISIS_DISTRIBUIDORA_VERSION = "gastos_franquicia_split_v1"
+ANALISIS_DISTRIBUIDORA_VERSION = "clubes_franquicia_sim_v1"
 
 if st.session_state.get("_analisis_distribuidora_version") != ANALISIS_DISTRIBUIDORA_VERSION:
     st.session_state.pop("analisis_distribuidora", None)
@@ -1004,10 +1004,19 @@ def _mostrar_analisis_clubes(analisis_clubes):
     descuento_ref = analisis_clubes.get("descuento_habitual_referencia_pct")
     if descuento_ref is not None:
         metodo_ref = analisis_clubes.get("descuento_habitual_referencia_metodo")
-        if metodo_ref == "descuento_real_simulado_especialidad_con_clubes":
+        if metodo_ref in {
+            "descuento_aparente_especialidad_menos_franquicia_simulada",
+            "fallback_menos_franquicia_simulada",
+        }:
+            cargo_club = float(analisis_clubes.get("cargo_club_franquicia_simulada", 0) or 0)
+            cargo_unitario = float(analisis_clubes.get("cargo_unitario_franquicia_simulada", 0) or 0)
+            descuento_bruto = float(analisis_clubes.get("descuento_bruto_club_simulado", 0) or 0)
+            unidades_club = float(analisis_clubes.get("unidades_club_simuladas", 0) or 0)
             st.caption(
-                "Referencia usada: descuento real simulado de especialidad "
-                f"{float(descuento_ref):.2f}% incorporando clubes sin liquidación y diluyendo cargos."
+                "Simulacion usada: los clubes sin liquidacion se anaden a especialidad normal "
+                f"({unidades_club:.0f} uds.). Descuento teorico {descuento_bruto:.2f} EUR "
+                f"menos franquicia simulada del club {cargo_club:.2f} EUR "
+                f"({cargo_unitario:.2f} EUR/ud.)."
             )
         else:
             st.caption(f"Referencia usada: descuento habitual de especialidad {float(descuento_ref):.2f}%.")
@@ -2645,7 +2654,10 @@ def _resumen_bidafarma(
         "Bitransfer",
         mask_bitransfer,
         coste_extra=0.0 if not resumen_bitransfer else (
-            resumen_bitransfer["coste_real_total_compras"] - resumen_bitransfer["importe_neto_compras"]
+            resumen_bitransfer.get(
+                "coste_extra_con_iva_21",
+                resumen_bitransfer["coste_real_total_compras"] - resumen_bitransfer["importe_neto_compras"],
+            )
         ),
     )
     bloque_transfer = agregar_bloque(
@@ -2665,7 +2677,12 @@ def _resumen_bidafarma(
     bloque_avantia = agregar_bloque(
         "Avantia",
         mask_avantia,
-        coste_extra=0.0 if not analisis_avantia else float(analisis_avantia["resumen"]["coste_total_avantia"]),
+        coste_extra=0.0 if not analisis_avantia else float(
+            analisis_avantia["resumen"].get(
+                "coste_total_avantia_con_iva_21",
+                analisis_avantia["resumen"].get("coste_total_avantia", 0),
+            )
+        ),
     )
 
     total_bidafarma_bruto = float(lineas_resumen["bruto"].sum())
@@ -3398,7 +3415,10 @@ def render_vida_pharma():
                             a3.metric("Bonif. esp.", f"{resumen_avantia['bonificacion_especialidad']:.2f} €")
                             a4.metric("Bonif. paraf.", f"{resumen_avantia['bonificacion_parafarmacia']:.2f} €")
                             a5.metric("Cuota Avantia", f"{resumen_avantia['cuota_avantia']:.2f} €")
-                            a6.metric("Coste total", f"{resumen_avantia['coste_total_avantia']:.2f} €")
+                            a6.metric(
+                                "Coste total",
+                                f"{resumen_avantia.get('coste_total_avantia_con_iva_21', resumen_avantia['coste_total_avantia']):.2f} €",
+                            )
 
                             cargos_calculados_avantia = analisis_avantia.get(
                                 "cargos_calculados",
