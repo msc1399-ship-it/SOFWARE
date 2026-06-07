@@ -56,7 +56,7 @@ try:
 except Exception:
     APP_PASSWORD = ""
 MAX_UPLOAD_MB = 50
-ANALISIS_DISTRIBUIDORA_VERSION = "zv_tramo_fijo_unidades_v4"
+ANALISIS_DISTRIBUIDORA_VERSION = "gastos_franquicia_split_v1"
 
 if st.session_state.get("_analisis_distribuidora_version") != ANALISIS_DISTRIBUIDORA_VERSION:
     st.session_state.pop("analisis_distribuidora", None)
@@ -1090,7 +1090,8 @@ def _mostrar_analisis_distribuidora(analisis):
     _tarjetas_metricas([
         {"label": "Compra bruta", "value": f"{resumen.get('compra_bruta_total', 0):.2f} €"},
         {"label": "Compra neta", "value": f"{resumen.get('compra_neta_total', 0):.2f} €"},
-        {"label": "Gastos totales", "value": f"{gastos_resumen.get('total_gastos', 0):.2f} €"},
+        {"label": "Franquicia", "value": f"{gastos_resumen.get('franquicias_ajustes_total', 0):.2f} €"},
+        {"label": "Otros gastos", "value": f"{gastos_resumen.get('otros_gastos_total', 0):.2f} €"},
         {"label": "Desc. medio", "value": _formatear_descuento_cargo_pct(descuento)},
         {
             "label": "Compra mensual",

@@ -360,6 +360,7 @@ def calcular_gastos_ocultos(
     analisis_avantia=None,
     resumen_bitransfer=None,
     analisis_transfer=None,
+    analisis_cargo_adicional=None,
     df_compras=None,
 ):
     filas = []
@@ -407,11 +408,17 @@ def calcular_gastos_ocultos(
     if resumen_bitransfer:
         agregar("gestion_bitransfer", resumen_bitransfer.get("cargo_resumen", 0), "bitransfer", segmento="bitransfer")
 
+    cargo_adicional_gestion = 0.0
+    if analisis_cargo_adicional:
+        cargo_adicional_gestion = float((analisis_cargo_adicional.get("resumen") or {}).get("cargo_total", 0) or 0)
+        agregar("franquicia_gestion", cargo_adicional_gestion, "factura_normal", segmento="goteo")
+
     gestion_explicada = 0.0
     if resumen_bitransfer:
         gestion_explicada += float(resumen_bitransfer.get("cargo_resumen", 0) or 0)
     if analisis_avantia:
         gestion_explicada += float((analisis_avantia.get("resumen") or {}).get("cargo_total", 0) or 0)
+    gestion_explicada += cargo_adicional_gestion
     if abs(gestion_factura_normal) > 0.0001:
         diferencia_gestion = gestion_factura_normal - gestion_explicada
         if abs(gestion_explicada) <= 0.0001:
@@ -424,9 +431,22 @@ def calcular_gastos_ocultos(
 
     gastos = pd.DataFrame(filas)
     total = float(gastos["importe"].sum()) if not gastos.empty else 0.0
+    franquicias_total = 0.0
+    if not gastos.empty and "tipo_gasto" in gastos.columns:
+        tipo_gasto = gastos["tipo_gasto"].astype(str).str.lower()
+        mask_franquicia = tipo_gasto.str.contains(
+            "franquicia|margen_tramo|tramo_fijo|tramo_cero|tramo_0|ajuste_escala|ajuste_de_escala|cargo_escala",
+            na=False,
+        )
+        franquicias_total = float(gastos.loc[mask_franquicia, "importe"].sum())
+    otros_gastos_total = total - franquicias_total
     resumen = {
         "total_gastos": round(total, 2),
+        "franquicias_ajustes_total": round(franquicias_total, 2),
+        "otros_gastos_total": round(otros_gastos_total, 2),
         "pct_gastos_sobre_compra": round((total / bruto_total * 100), 2) if bruto_total else 0.0,
+        "pct_franquicias_sobre_compra": round((franquicias_total / bruto_total * 100), 2) if bruto_total else 0.0,
+        "pct_otros_gastos_sobre_compra": round((otros_gastos_total / bruto_total * 100), 2) if bruto_total else 0.0,
         "impacto_gastos_sobre_descuento": round((total / bruto_total * 100), 2) if bruto_total else 0.0,
     }
     return gastos, resumen
@@ -734,6 +754,7 @@ def generar_analisis_distribuidora(
         analisis_avantia=analisis_avantia,
         resumen_bitransfer=resumen_bitransfer,
         analisis_transfer=analisis_transfer,
+        analisis_cargo_adicional=analisis_cargo_adicional,
         df_compras=df,
     )
     descuentos = calcular_descuentos_reales(df, desglose=desglose, gastos_resumen=gastos_resumen)
