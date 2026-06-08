@@ -61,9 +61,20 @@ def obtener_metadata(clave=None):
     metadata = _leer_metadata()
     if clave is None:
         for clave_definida in DEFINICIONES:
-            metadata.setdefault(clave_definida, _descubrir_archivo(clave_definida) or {})
+            info = metadata.get(clave_definida)
+            ruta = BASE_DIR / info.get("filename", "") if info else None
+            if not info or ruta is None or not ruta.exists():
+                descubierto = _descubrir_archivo(clave_definida)
+                if descubierto:
+                    metadata[clave_definida] = descubierto
+                else:
+                    metadata.pop(clave_definida, None)
         return {k: v for k, v in metadata.items() if v}
-    return metadata.get(clave) or _descubrir_archivo(clave)
+    info = metadata.get(clave)
+    ruta = BASE_DIR / info.get("filename", "") if info else None
+    if info and ruta is not None and ruta.exists():
+        return info
+    return _descubrir_archivo(clave)
 
 
 def _descubrir_archivo(clave):
